@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+
+[package]
+name = "presswerk-app"
+description = "Presswerk — High-Assurance Local Print Router/Server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "presswerk"
+path = "src/main.rs"
+
+[dependencies]
+presswerk-core = { workspace = true }
+presswerk-security = { workspace = true }
+presswerk-document = { workspace = true }
+presswerk-print = { workspace = true }
+presswerk-bridge = { workspace = true }
+dioxus = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+image = { workspace = true }
+rfd = { workspace = true }

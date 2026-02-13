@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Presswerk — Dioxus CLI Configuration
+
+[application]
+name = "presswerk"
+default_platform = "desktop"
+
+[application.asset_dir]
+path = "assets"
+
+[desktop]
+title = "Presswerk"
+
+[mobile]
+# iOS
+[mobile.ios]
+bundle_id = "org.hyperpolymath.presswerk"
+minimum_os_version = "16.0"
+team_id = ""
+
+# Android
+[mobile.android]
+package = "org.hyperpolymath.presswerk"
+min_sdk_version = 26
+target_sdk_version = 34

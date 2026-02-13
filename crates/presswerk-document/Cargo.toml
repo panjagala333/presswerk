@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+
+[package]
+name = "presswerk-document"
+description = "PDF, image, and scanning operations for Presswerk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+ocr = ["dep:ocrs", "dep:rten", "dep:rten-imageproc", "dep:rten-tensor"]
+
+[dependencies]
+presswerk-core = { workspace = true }
+lopdf = { workspace = true }
+printpdf = { workspace = true }
+image = { workspace = true }
+imageproc = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+sha2 = { workspace = true }
+
+# OCR — optional, behind the "ocr" feature gate
+ocrs = { workspace = true, optional = true }
+rten = { workspace = true, optional = true }
+rten-imageproc = { workspace = true, optional = true }
+rten-tensor = { workspace = true, optional = true }

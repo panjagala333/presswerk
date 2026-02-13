@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+
+[package]
+name = "presswerk-bridge"
+description = "Native platform bridges (iOS/Android) for Presswerk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+presswerk-core = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSDictionary", "NSURL", "NSData"] }
+objc2-ui-kit = { version = "0.3", features = [
+    "UIApplication",
+    "UIViewController",
+    "UINavigationController",
+    "UIPrintInteractionController",
+    "UIImagePickerController",
+    "UIDocumentPickerViewController",
+    "UIActivityViewController",
+    "UIResponder",
+] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"

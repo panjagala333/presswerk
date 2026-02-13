@@ -1,0 +1,85 @@
+= Presswerk
+:toc:
+:toc-placement!:
+:icons: font
+
+**High-Assurance Local Print Router/Server**
+
+Presswerk (German: _press works / printing press_) is a cross-platform mobile app that discovers network printers, manages print jobs, processes documents, and exposes your phone as a network print server.
+
+toc::[]
+
+== Features
+
+* **Printer Discovery** — mDNS/DNS-SD scanning for IPP printers on the local network
+* **IPP Printing** — Full RFC 8010/8011 Internet Printing Protocol client
+* **Print Server Mode** — Phone advertises itself as a network printer; other LAN devices can print to it
+* **Document Processing** — PDF read/merge/split/rotate/crop, image resize/enhance, text-to-PDF
+* **Document Scanning** — Camera capture with edge detection, perspective correction, binarisation, OCR
+* **Encrypted Storage** — age (X25519) encryption at rest for all local data
+* **Audit Trail** — Append-only encrypted SQLite log of every operation
+* **Formal Verification** — Idris2 ABI proofs for protocol correctness and encryption invariants
+
+== Architecture
+
+[source]
+----
+presswerk/
+├── Cargo.toml                    # Workspace root
+├── Dioxus.toml                   # Dioxus CLI config
+├── justfile                      # Build recipes
+├── crates/
+│   ├── presswerk-core/           # Shared types, errors, config
+│   ├── presswerk-security/       # Encrypted storage, audit trail, TLS certs
+│   ├── presswerk-document/       # PDF ops, image processing, scanning, OCR
+│   ├── presswerk-print/          # IPP client, IPP server, mDNS discovery, job queue
+│   ├── presswerk-bridge/         # Native platform FFI (iOS objc2 + Android JNI)
+│   └── presswerk-app/            # Dioxus UI (pages, components, hooks, state)
+├── src/abi/                      # Idris2 ABI definitions (formal proofs)
+├── ffi/zig/                      # Zig FFI implementation
+├── generated/abi/                # Auto-generated C headers
+├── .machine_readable/            # SCM metadata files
+└── .bot_directives/              # Bot directives
+----
+
+== Tech Stack
+
+|===
+|Layer |Technology |Purpose
+
+|UI Framework |Dioxus 0.7+ |Pure Rust, React-like, mobile-native
+|Print Protocol |ipp (RFC 8010/8011) |Network printing
+|Discovery |mdns-sd |mDNS/DNS-SD printer scanning
+|PDF |lopdf + printpdf |Read/write/manipulate PDFs
+|Image |image + imageproc |Processing pipeline
+|Security |age + ring + rustls |Encryption, TLS, integrity
+|Storage |rusqlite (bundled) |Persistent job queue + audit trail
+|ABI |Idris2 |Formal verification
+|FFI |Zig |C-compatible implementation
+|===
+
+== Quick Start
+
+[source,bash]
+----
+# Desktop development
+just dev
+
+# Run tests
+just test
+
+# Lint
+just lint
+
+# iOS (requires macOS + Xcode)
+just ios
+
+# Android (requires NDK)
+just android
+----
+
+== License
+
+SPDX-License-Identifier: PMPL-1.0-or-later
+
+Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <jonathan.jewell@open.ac.uk>

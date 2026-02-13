@@ -1,0 +1,67 @@
+# STOP — CRITICAL READING REQUIRED
+
+**THIS FILE MUST BE READ FIRST BY ALL AI AGENTS**
+
+## WHAT IS THIS?
+
+This is the AI manifest for **presswerk**. It declares:
+- Canonical file locations (where things MUST be, and nowhere else)
+- Critical invariants (rules that must NEVER be violated)
+- Repository structure and organization
+
+## CANONICAL LOCATIONS (UNIVERSAL RULE)
+
+### Machine-Readable Metadata: `.machine_readable/` ONLY
+
+These 6 SCM files MUST exist in `.machine_readable/` directory ONLY:
+1. **STATE.scm** - Project state, progress, blockers
+2. **META.scm** - Architecture decisions, governance
+3. **ECOSYSTEM.scm** - Position in ecosystem, relationships
+4. **AGENTIC.scm** - AI agent interaction patterns
+5. **NEUROSYM.scm** - Neurosymbolic integration config
+6. **PLAYBOOK.scm** - Operational runbook
+
+**CRITICAL:** If ANY of these files exist in the root directory, this is an ERROR.
+
+### Bot Directives: `.bot_directives/` ONLY
+
+Bot-specific instructions for the gitbot-fleet.
+
+### Source Code: `crates/` ONLY
+
+All Rust source code lives in the `crates/` workspace directory. The six crates are:
+- `presswerk-core` — Shared types, errors, config (no internal deps)
+- `presswerk-security` — Encrypted storage, audit trail, TLS (depends: core)
+- `presswerk-document` — PDF, image, scanning (depends: core)
+- `presswerk-print` — IPP client/server, mDNS, job queue (depends: core, security)
+- `presswerk-bridge` — iOS (objc2) + Android (JNI) bridges (depends: core)
+- `presswerk-app` — Dioxus UI (depends: all above)
+
+### Formal Verification: `src/abi/` and `ffi/zig/`
+
+Idris2 ABI proofs in `src/abi/`, Zig FFI in `ffi/zig/`, generated C headers in `generated/abi/`.
+
+## CORE INVARIANTS
+
+1. **No SCM duplication** — Root must NOT contain STATE.scm, META.scm, etc.
+2. **Single source of truth** — `.machine_readable/` is authoritative
+3. **License** — All code PMPL-1.0-or-later
+4. **Author** — "Jonathan D.A. Jewell <jonathan.jewell@open.ac.uk>"
+5. **No unsafe Rust** without `// SAFETY:` comment
+6. **No banned crates** — No C-based OCR (Tesseract), no openssl (use ring/rustls)
+7. **Container standard** — Containerfile (not Dockerfile), Podman (not Docker), chainguard base images
+
+## SESSION STARTUP CHECKLIST
+
+1. Read THIS file (0-AI-MANIFEST.a2ml) first
+2. Read `.machine_readable/STATE.scm` for current status
+3. Run `cargo test --workspace` to verify state
+4. Check for blockers in STATE.scm
+
+## META
+
+- **Format Version:** 1.0.0
+- **Created:** 2026-02-13
+- **Maintained By:** Jonathan D.A. Jewell (hyperpolymath)
+- **License:** PMPL-1.0-or-later
+- **Protocol:** https://github.com/hyperpolymath/0-ai-gatekeeper-protocol

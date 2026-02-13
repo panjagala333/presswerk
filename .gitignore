@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Presswerk .gitignore
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+.directory
+
+# Build
+/target/
+/dist/
+/out/
+
+# Rust
+# Keep Cargo.lock for binary crate
+
+# Dioxus
+/gen/
+/.dioxus/
+
+# Dependencies
+/node_modules/
+/vendor/
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# Test/Coverage
+/coverage/
+htmlcov/
+
+# Logs
+*.log
+/logs/
+
+# Temp
+/tmp/
+*.tmp
+*.bak
+
+# Crash recovery artifacts
+ai-cli-crash-capture/
+
+# Sync artifacts
+sync_report*.txt

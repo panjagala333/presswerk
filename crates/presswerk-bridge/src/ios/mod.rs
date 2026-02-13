@@ -1,0 +1,801 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <jonathan.jewell@open.ac.uk>
+//
+// iOS platform bridge via objc2.
+//
+// Requires compilation with the iOS SDK (Xcode). Each trait method wraps the
+// corresponding UIKit / Security.framework API through Objective-C message sends.
+//
+// This module is cfg-gated to `target_os = "ios"` and will not compile on other
+// platforms.  All UIKit interactions require the main thread; methods that
+// present view controllers will return `PresswerkError::Bridge` if called
+// off-main.
+
+#![cfg(target_os = "ios")]
+
+use std::cell::RefCell;
+use std::ffi::c_void;
+use std::sync::mpsc;
+
+use objc2::rc::Retained;
+use objc2::runtime::{AnyObject, Bool, NSObject, ProtocolObject};
+use objc2::{define_class, msg_send, AllocAnyThread, MainThreadMarker};
+use objc2_foundation::{NSArray, NSData, NSDictionary, NSString, NSURL};
+use objc2_ui_kit::{
+    UIActivityViewController, UIApplication, UIDocumentPickerDelegate,
+    UIDocumentPickerViewController, UIImagePickerController,
+    UIImagePickerControllerDelegate, UIImagePickerControllerSourceType,
+    UINavigationControllerDelegate, UIPrintInteractionController,
+    UIViewController,
+};
+
+use presswerk_core::error::{PresswerkError, Result};
+
+use crate::traits::*;
+
+// ---------------------------------------------------------------------------
+// Security.framework FFI (keychain)
+// ---------------------------------------------------------------------------
+// Security.framework is a C API not wrapped by objc2.  NSDictionary and
+// CFDictionary are toll-free bridged, so we cast freely between them.
+
+/// OSStatus success.
+const ERR_SEC_SUCCESS: i32 = 0;
+/// The item was not found in the keychain.
+const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+/// A duplicate item already exists.
+const ERR_SEC_DUPLICATE_ITEM: i32 = -25299;
+
+extern "C" {
+    fn SecItemAdd(attributes: *const c_void, result: *mut *const c_void) -> i32;
+    fn SecItemCopyMatching(query: *const c_void, result: *mut *const c_void) -> i32;
+    fn SecItemUpdate(query: *const c_void, attrs_to_update: *const c_void) -> i32;
+    fn SecItemDelete(query: *const c_void) -> i32;
+}
+
+// Security.framework constant strings.  These are `CFStringRef` globals,
+// toll-free bridged with `NSString *`.  They are linked automatically when
+// building against the iOS SDK.
+extern "C" {
+    static kSecClass: &'static NSString;
+    static kSecClassGenericPassword: &'static NSString;
+    static kSecAttrAccount: &'static NSString;
+    static kSecAttrService: &'static NSString;
+    static kSecValueData: &'static NSString;
+    static kSecReturnData: &'static NSString;
+    static kSecMatchLimit: &'static NSString;
+    static kSecMatchLimitOne: &'static NSString;
+}
+
+/// The keychain service identifier for all Presswerk secrets.
+const KEYCHAIN_SERVICE: &str = "org.hyperpolymath.presswerk";
+
+// ---------------------------------------------------------------------------
+// UIKit C functions & constants
+// ---------------------------------------------------------------------------
+
+// UIImagePickerControllerSourceType constants are provided by objc2-ui-kit.
+// We use the Camera variant for capture_image().
+
+extern "C" {
+    /// Key into the `info` dictionary passed to the image-picker delegate.
+    /// The value is the original `UIImage` chosen by the user.
+    static UIImagePickerControllerOriginalImage: &'static NSString;
+
+    /// Convert a `UIImage` to JPEG `NSData`.
+    ///
+    /// ```c
+    /// NSData * _Nullable UIImageJPEGRepresentation(UIImage *image,
+    ///                                              CGFloat compressionQuality);
+    /// ```
+    fn UIImageJPEGRepresentation(
+        image: *const AnyObject,
+        compression_quality: f64,
+    ) -> *mut AnyObject;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Obtain the root `UIViewController` from the key window.
+///
+/// Uses the deprecated `keyWindow` property for broad iOS-version compat.
+/// On iOS 15+ the caller should ideally walk `connectedScenes`, but for an
+/// MVP bridge this is sufficient.
+fn root_view_controller() -> Result<Retained<UIViewController>> {
+    let mtm = MainThreadMarker::new().ok_or_else(|| {
+        PresswerkError::Bridge("must be called from the main thread".into())
+    })?;
+
+    let app = UIApplication::sharedApplication(mtm);
+
+    // UIApplication.keyWindow -> UIWindow? -> rootViewController?
+    let root: Option<Retained<UIViewController>> = unsafe {
+        let window: Option<Retained<AnyObject>> = msg_send![&app, keyWindow];
+        window.and_then(|w| msg_send![&w, rootViewController])
+    };
+
+    root.ok_or_else(|| {
+        PresswerkError::Bridge("no root view controller available".into())
+    })
+}
+
+/// Assert that we are on the main thread and return the marker.
+fn require_main_thread() -> Result<MainThreadMarker> {
+    MainThreadMarker::new().ok_or_else(|| {
+        PresswerkError::Bridge("must be called from the main thread".into())
+    })
+}
+
+/// Cast `NSDictionary` to a `*const c_void` for Security.framework calls.
+///
+/// NSDictionary and CFDictionary are toll-free bridged so this cast is valid.
+fn dict_as_cf(dict: &NSDictionary<NSString, AnyObject>) -> *const c_void {
+    dict as *const NSDictionary<NSString, AnyObject> as *const c_void
+}
+
+/// Cast a `*const NSString` to `*const AnyObject` (NSString *is* an
+/// AnyObject).
+unsafe fn nsstr_as_obj(s: &NSString) -> &AnyObject {
+    &*(s as *const NSString as *const AnyObject)
+}
+
+/// Cast an `NSData` reference to `&AnyObject`.
+unsafe fn nsdata_as_obj(d: &NSData) -> &AnyObject {
+    &*(d as *const NSData as *const AnyObject)
+}
+
+// ---------------------------------------------------------------------------
+// Camera delegate (UIImagePickerControllerDelegate)
+// ---------------------------------------------------------------------------
+// Captures an `mpsc::Sender` so that `capture_image` can block until the
+// user takes a photo or cancels.
+
+struct CameraDelegateIvars {
+    /// Channel sender; taken (`Option::take`) on first callback to prevent
+    /// double-sends.
+    sender: RefCell<Option<mpsc::Sender<Option<Vec<u8>>>>>,
+}
+
+define_class! {
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "PresswerkCameraDelegate"]
+    #[ivars = CameraDelegateIvars]
+    struct CameraDelegate;
+
+    unsafe impl UIImagePickerControllerDelegate for CameraDelegate {
+        /// Called when the user has taken or chosen an image.
+        #[unsafe(method(imagePickerController:didFinishPickingMediaWithInfo:))]
+        fn did_finish(
+            &self,
+            picker: &UIImagePickerController,
+            info: &NSDictionary<NSString, AnyObject>,
+        ) {
+            // Extract the original UIImage from the info dictionary.
+            let image_bytes: Option<Vec<u8>> = unsafe {
+                info.objectForKey(UIImagePickerControllerOriginalImage)
+            }
+            .and_then(|ui_image: Retained<AnyObject>| {
+                // UIImageJPEGRepresentation is a C function that returns
+                // an autoreleased NSData*.
+                let raw = unsafe {
+                    UIImageJPEGRepresentation(
+                        &*ui_image as *const AnyObject,
+                        0.9, // 90% JPEG quality
+                    )
+                };
+                if raw.is_null() {
+                    None
+                } else {
+                    let ns_data: &NSData = unsafe { &*(raw as *const NSData) };
+                    Some(ns_data.to_vec())
+                }
+            });
+
+            // Dismiss the picker.
+            unsafe {
+                let _: () = msg_send![
+                    picker,
+                    dismissViewControllerAnimated: true,
+                    completion: std::ptr::null::<c_void>()
+                ];
+            }
+
+            // Send the result through the channel.
+            if let Some(tx) = self.ivars().sender.borrow_mut().take() {
+                let _ = tx.send(image_bytes);
+            }
+        }
+
+        /// Called when the user cancels the camera.
+        #[unsafe(method(imagePickerControllerDidCancel:))]
+        fn did_cancel(&self, picker: &UIImagePickerController) {
+            unsafe {
+                let _: () = msg_send![
+                    picker,
+                    dismissViewControllerAnimated: true,
+                    completion: std::ptr::null::<c_void>()
+                ];
+            }
+            if let Some(tx) = self.ivars().sender.borrow_mut().take() {
+                let _ = tx.send(None);
+            }
+        }
+    }
+
+    // UIImagePickerController requires its delegate to also conform to
+    // UINavigationControllerDelegate.  We provide an empty impl.
+    unsafe impl UINavigationControllerDelegate for CameraDelegate {}
+}
+
+impl CameraDelegate {
+    /// Create a new camera delegate wired to `tx`.
+    fn new(
+        mtm: MainThreadMarker,
+        tx: mpsc::Sender<Option<Vec<u8>>>,
+    ) -> Retained<Self> {
+        let this = mtm.alloc::<Self>();
+        let this = this.set_ivars(CameraDelegateIvars {
+            sender: RefCell::new(Some(tx)),
+        });
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Document picker delegate (UIDocumentPickerDelegate)
+// ---------------------------------------------------------------------------
+
+struct DocPickerDelegateIvars {
+    sender: RefCell<Option<mpsc::Sender<Option<String>>>>,
+}
+
+define_class! {
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "PresswerkDocPickerDelegate"]
+    #[ivars = DocPickerDelegateIvars]
+    struct DocPickerDelegate;
+
+    unsafe impl UIDocumentPickerDelegate for DocPickerDelegate {
+        /// Called when the user selects one or more documents.
+        #[unsafe(method(documentPicker:didPickDocumentsAtURLs:))]
+        fn did_pick(
+            &self,
+            _controller: &UIDocumentPickerViewController,
+            urls: &NSArray<NSURL>,
+        ) {
+            // Take the first selected URL and convert to a file-system path.
+            let path: Option<String> = urls.firstObject().and_then(|url| {
+                let ns_path: Option<Retained<NSString>> =
+                    unsafe { msg_send![&url, path] };
+                ns_path.map(|p| p.to_string())
+            });
+            if let Some(tx) = self.ivars().sender.borrow_mut().take() {
+                let _ = tx.send(path);
+            }
+        }
+
+        /// Called when the user cancels the document picker.
+        #[unsafe(method(documentPickerWasCancelled:))]
+        fn was_cancelled(&self, _controller: &UIDocumentPickerViewController) {
+            if let Some(tx) = self.ivars().sender.borrow_mut().take() {
+                let _ = tx.send(None);
+            }
+        }
+    }
+}
+
+impl DocPickerDelegate {
+    fn new(
+        mtm: MainThreadMarker,
+        tx: mpsc::Sender<Option<String>>,
+    ) -> Retained<Self> {
+        let this = mtm.alloc::<Self>();
+        let this = this.set_ivars(DocPickerDelegateIvars {
+            sender: RefCell::new(Some(tx)),
+        });
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IosBridge
+// ---------------------------------------------------------------------------
+
+/// Concrete iOS platform bridge.
+///
+/// All methods that present UI controllers require invocation from the main
+/// thread.  The keychain methods (`NativeKeychain`) are thread-safe and may
+/// be called from any thread.
+pub struct IosBridge;
+
+impl IosBridge {
+    /// Create a new iOS bridge instance.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl PlatformBridge for IosBridge {
+    fn platform_name(&self) -> &str {
+        "iOS"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NativePrint -- UIPrintInteractionController
+// ---------------------------------------------------------------------------
+
+impl NativePrint for IosBridge {
+    /// Present the system print dialog for the supplied document bytes.
+    ///
+    /// The `mime_type` parameter is informational; the print system infers
+    /// the document type from the raw data.  This is fire-and-forget: once
+    /// the dialog is presented the user drives the rest of the interaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresswerkError::Bridge` if not called from the main thread
+    /// or if the print controller refuses to present.
+    fn show_print_dialog(&self, document: &[u8], _mime_type: &str) -> Result<()> {
+        let mtm = require_main_thread()?;
+
+        tracing::info!(
+            bytes = document.len(),
+            "iOS: presenting UIPrintInteractionController"
+        );
+
+        let controller = UIPrintInteractionController::sharedPrintController(mtm);
+        let ns_data = NSData::with_bytes(document);
+
+        // Set the document data as the single printing item.
+        unsafe {
+            controller.setPrintingItem(Some(&ns_data));
+        }
+
+        // Present the print dialog.  Completion handler is None (fire-and-
+        // forget).
+        let presented = unsafe {
+            controller.presentAnimated_completionHandler(true, None)
+        };
+
+        if presented {
+            Ok(())
+        } else {
+            Err(PresswerkError::Bridge(
+                "UIPrintInteractionController refused to present".into(),
+            ))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NativeCamera -- UIImagePickerController
+// ---------------------------------------------------------------------------
+
+impl NativeCamera for IosBridge {
+    /// Launch the device camera and return captured JPEG bytes.
+    ///
+    /// This method **must** be called from the main thread.  It blocks the
+    /// current thread until the user either takes a photo (returns
+    /// `Ok(Some(jpeg_bytes))`) or cancels (`Ok(None)`).
+    ///
+    /// The returned bytes are JPEG-encoded at 90 % quality.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresswerkError::Bridge` when:
+    /// - Called off the main thread.
+    /// - The camera source type is unavailable (e.g. Simulator).
+    /// - No root view controller is available for presentation.
+    fn capture_image(&self) -> Result<Option<Vec<u8>>> {
+        let mtm = require_main_thread()?;
+
+        tracing::info!("iOS: launching UIImagePickerController for camera");
+
+        // Verify camera availability.
+        let available = UIImagePickerController::isSourceTypeAvailable(
+            UIImagePickerControllerSourceType::Camera,
+            mtm,
+        );
+        if !available {
+            return Err(PresswerkError::Bridge(
+                "camera source type is not available on this device".into(),
+            ));
+        }
+
+        let picker = UIImagePickerController::new(mtm);
+        unsafe {
+            picker.setSourceType(UIImagePickerControllerSourceType::Camera);
+        }
+
+        // Channel for the delegate to deliver the result.
+        let (tx, rx) = mpsc::channel();
+        let delegate = CameraDelegate::new(mtm, tx);
+
+        // UIImagePickerController.delegate is typed as
+        // `UIImagePickerControllerDelegate & UINavigationControllerDelegate`.
+        // Our CameraDelegate conforms to both.
+        unsafe {
+            let delegate_obj: &AnyObject =
+                &*((&*delegate) as *const CameraDelegate as *const AnyObject);
+            picker.setDelegate(Some(delegate_obj));
+        }
+
+        // Present modally on the root view controller.
+        let root_vc = root_view_controller()?;
+        unsafe {
+            root_vc.presentViewController_animated_completion(&picker, true, None);
+        }
+
+        // Block until the delegate fires.  The main run loop continues to
+        // pump while the picker is presented, so the delegate callbacks
+        // will execute on the main thread as expected.
+        let result = rx.recv().map_err(|e| {
+            PresswerkError::Bridge(format!("camera delegate channel error: {e}"))
+        })?;
+
+        Ok(result)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NativeFilePicker -- UIDocumentPickerViewController
+// ---------------------------------------------------------------------------
+
+impl NativeFilePicker for IosBridge {
+    /// Present a document picker filtered to the given MIME types.
+    ///
+    /// MIME types are converted to `UTType` identifiers via
+    /// `[UTType typeWithMIMEType:]`.  Unrecognised types are silently
+    /// dropped; if none resolve the picker defaults to `UTType.data`
+    /// (public.data), which matches all file types.
+    ///
+    /// Returns the file-system path of the selected document, or `None` if
+    /// the user cancelled.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresswerkError::Bridge` if not called from the main thread.
+    fn pick_file(&self, mime_types: &[&str]) -> Result<Option<String>> {
+        let mtm = require_main_thread()?;
+
+        tracing::info!(
+            types = ?mime_types,
+            "iOS: presenting UIDocumentPickerViewController"
+        );
+
+        // Convert MIME types to UTType objects via the ObjC runtime.
+        // UTType lives in UniformTypeIdentifiers.framework, which is
+        // linked automatically on iOS 14+.
+        let ut_types: Vec<Retained<AnyObject>> = mime_types
+            .iter()
+            .filter_map(|mime| {
+                let ns_mime = NSString::from_str(mime);
+                let ut: Option<Retained<AnyObject>> = unsafe {
+                    msg_send![
+                        objc2::class!(UTType),
+                        typeWithMIMEType: &*ns_mime
+                    ]
+                };
+                ut
+            })
+            .collect();
+
+        // Fall back to UTType.data (public.data) if nothing resolved.
+        let content_types: Retained<NSArray<AnyObject>> = if ut_types.is_empty() {
+            let public_data: Retained<AnyObject> = unsafe {
+                msg_send![objc2::class!(UTType), dataType]
+            };
+            NSArray::from_retained_slice(&[public_data])
+        } else {
+            NSArray::from_retained_slice(&ut_types)
+        };
+
+        // Create the document picker.  `initForOpeningContentTypes:` takes
+        // an `NSArray<UTType>` but we pass `NSArray<AnyObject>` which is
+        // valid at the ObjC level (same layout).
+        let picker: Retained<UIDocumentPickerViewController> = unsafe {
+            let alloc: Retained<UIDocumentPickerViewController> =
+                msg_send![objc2::class!(UIDocumentPickerViewController), alloc];
+            msg_send![
+                alloc,
+                initForOpeningContentTypes: &*content_types
+            ]
+        };
+
+        // Wire up the delegate.
+        let (tx, rx) = mpsc::channel();
+        let delegate = DocPickerDelegate::new(mtm, tx);
+
+        unsafe {
+            picker.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        }
+
+        // Present on the root view controller.
+        let root_vc = root_view_controller()?;
+        unsafe {
+            root_vc.presentViewController_animated_completion(&picker, true, None);
+        }
+
+        let result = rx.recv().map_err(|e| {
+            PresswerkError::Bridge(format!("document picker channel error: {e}"))
+        })?;
+
+        Ok(result)
+    }
+
+    /// Read the bytes of a previously picked file.
+    ///
+    /// Uses `std::fs::read` which works for paths within the app sandbox and
+    /// for files the user has granted access to via the document picker (the
+    /// security-scoped bookmark is resolved at pick time).
+    ///
+    /// For files outside the sandbox, the caller should start a
+    /// security-scoped access session before calling this method.
+    fn read_picked_file(&self, path: &str) -> Result<Vec<u8>> {
+        tracing::debug!(path, "iOS: reading picked file");
+        std::fs::read(path).map_err(|e| {
+            PresswerkError::Bridge(format!("failed to read picked file: {e}"))
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NativeKeychain -- Security.framework
+// ---------------------------------------------------------------------------
+
+impl NativeKeychain for IosBridge {
+    /// Store `value` in the iOS Keychain under `key`.
+    ///
+    /// If an entry already exists for `key` it is updated in place via
+    /// `SecItemUpdate`.
+    ///
+    /// This method is thread-safe and does not require the main thread.
+    fn store_secret(&self, key: &str, value: &[u8]) -> Result<()> {
+        tracing::info!(key, "iOS: storing secret in Keychain");
+
+        let ns_key = NSString::from_str(key);
+        let ns_service = NSString::from_str(KEYCHAIN_SERVICE);
+        let ns_data = NSData::with_bytes(value);
+
+        let keys: Vec<&NSString> = unsafe {
+            vec![kSecClass, kSecAttrAccount, kSecAttrService, kSecValueData]
+        };
+        let values: Vec<&AnyObject> = unsafe {
+            vec![
+                nsstr_as_obj(kSecClassGenericPassword),
+                nsstr_as_obj(&ns_key),
+                nsstr_as_obj(&ns_service),
+                nsdata_as_obj(&ns_data),
+            ]
+        };
+
+        let dict = NSDictionary::from_slices(&keys, &values);
+
+        let status = unsafe { SecItemAdd(dict_as_cf(&dict), std::ptr::null_mut()) };
+
+        match status {
+            ERR_SEC_SUCCESS => Ok(()),
+            ERR_SEC_DUPLICATE_ITEM => {
+                // Item exists -- update it instead.
+                self.update_secret(key, value)
+            }
+            code => Err(PresswerkError::Bridge(format!(
+                "SecItemAdd failed with OSStatus {code}"
+            ))),
+        }
+    }
+
+    /// Retrieve a secret from the iOS Keychain by `key`.
+    ///
+    /// Returns `Ok(None)` if no entry exists for the given key.
+    ///
+    /// This method is thread-safe.
+    fn load_secret(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        tracing::debug!(key, "iOS: loading secret from Keychain");
+
+        let ns_key = NSString::from_str(key);
+        let ns_service = NSString::from_str(KEYCHAIN_SERVICE);
+
+        // kSecReturnData expects a CFBoolean.  kCFBooleanTrue is toll-free
+        // bridged with `[NSNumber numberWithBool:YES]`.
+        let cf_true: Retained<AnyObject> = unsafe {
+            msg_send![objc2::class!(NSNumber), numberWithBool: Bool::YES]
+        };
+
+        let keys: Vec<&NSString> = unsafe {
+            vec![
+                kSecClass,
+                kSecAttrAccount,
+                kSecAttrService,
+                kSecReturnData,
+                kSecMatchLimit,
+            ]
+        };
+        let values: Vec<&AnyObject> = unsafe {
+            vec![
+                nsstr_as_obj(kSecClassGenericPassword),
+                nsstr_as_obj(&ns_key),
+                nsstr_as_obj(&ns_service),
+                &*cf_true,
+                nsstr_as_obj(kSecMatchLimitOne),
+            ]
+        };
+
+        let dict = NSDictionary::from_slices(&keys, &values);
+
+        let mut result: *const c_void = std::ptr::null();
+        let status =
+            unsafe { SecItemCopyMatching(dict_as_cf(&dict), &mut result) };
+
+        match status {
+            ERR_SEC_SUCCESS => {
+                if result.is_null() {
+                    return Ok(None);
+                }
+                // `result` is a retained CFData (toll-free bridged with NSData).
+                let ns_data: &NSData = unsafe { &*(result as *const NSData) };
+                let bytes = ns_data.to_vec();
+
+                // Balance the implicit retain from SecItemCopyMatching.
+                unsafe {
+                    let _: () = msg_send![result as *const AnyObject, release];
+                }
+
+                Ok(Some(bytes))
+            }
+            ERR_SEC_ITEM_NOT_FOUND => Ok(None),
+            code => Err(PresswerkError::Bridge(format!(
+                "SecItemCopyMatching failed with OSStatus {code}"
+            ))),
+        }
+    }
+
+    /// Delete a secret from the iOS Keychain.
+    ///
+    /// Silently succeeds if no entry exists for `key`.
+    ///
+    /// This method is thread-safe.
+    fn delete_secret(&self, key: &str) -> Result<()> {
+        tracing::info!(key, "iOS: deleting secret from Keychain");
+
+        let ns_key = NSString::from_str(key);
+        let ns_service = NSString::from_str(KEYCHAIN_SERVICE);
+
+        let keys: Vec<&NSString> =
+            unsafe { vec![kSecClass, kSecAttrAccount, kSecAttrService] };
+        let values: Vec<&AnyObject> = unsafe {
+            vec![
+                nsstr_as_obj(kSecClassGenericPassword),
+                nsstr_as_obj(&ns_key),
+                nsstr_as_obj(&ns_service),
+            ]
+        };
+
+        let dict = NSDictionary::from_slices(&keys, &values);
+        let status = unsafe { SecItemDelete(dict_as_cf(&dict)) };
+
+        match status {
+            ERR_SEC_SUCCESS | ERR_SEC_ITEM_NOT_FOUND => Ok(()),
+            code => Err(PresswerkError::Bridge(format!(
+                "SecItemDelete failed with OSStatus {code}"
+            ))),
+        }
+    }
+}
+
+/// Private keychain helpers.
+impl IosBridge {
+    /// Update an existing keychain entry with new value bytes.
+    fn update_secret(&self, key: &str, value: &[u8]) -> Result<()> {
+        let ns_key = NSString::from_str(key);
+        let ns_service = NSString::from_str(KEYCHAIN_SERVICE);
+        let ns_data = NSData::with_bytes(value);
+
+        // Query to locate the existing item.
+        let query_keys: Vec<&NSString> =
+            unsafe { vec![kSecClass, kSecAttrAccount, kSecAttrService] };
+        let query_values: Vec<&AnyObject> = unsafe {
+            vec![
+                nsstr_as_obj(kSecClassGenericPassword),
+                nsstr_as_obj(&ns_key),
+                nsstr_as_obj(&ns_service),
+            ]
+        };
+        let query = NSDictionary::from_slices(&query_keys, &query_values);
+
+        // New value to write.
+        let update_keys: Vec<&NSString> = unsafe { vec![kSecValueData] };
+        let update_values: Vec<&AnyObject> =
+            unsafe { vec![nsdata_as_obj(&ns_data)] };
+        let update = NSDictionary::from_slices(&update_keys, &update_values);
+
+        let status = unsafe {
+            SecItemUpdate(dict_as_cf(&query), dict_as_cf(&update))
+        };
+
+        if status == ERR_SEC_SUCCESS {
+            Ok(())
+        } else {
+            Err(PresswerkError::Bridge(format!(
+                "SecItemUpdate failed with OSStatus {status}"
+            )))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NativeShare -- UIActivityViewController
+// ---------------------------------------------------------------------------
+
+impl NativeShare for IosBridge {
+    /// Present the iOS share sheet for the file at `path`.
+    ///
+    /// The `mime_type` parameter is currently unused; the share sheet infers
+    /// the content type from the file extension / UTI.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PresswerkError::Bridge` if not called from the main thread
+    /// or if no root view controller is available.
+    fn share_file(&self, path: &str, _mime_type: &str) -> Result<()> {
+        let _mtm = require_main_thread()?;
+
+        tracing::info!(path, "iOS: presenting UIActivityViewController");
+
+        let ns_path = NSString::from_str(path);
+        let url = NSURL::fileURLWithPath(&ns_path);
+
+        // UIActivityViewController expects an NSArray of activity items.
+        // We upcast NSURL -> AnyObject via Retained::into_super.
+        let url_as_obj: Retained<AnyObject> = Retained::into_super(
+            Retained::into_super(url),
+        );
+        let items = NSArray::from_retained_slice(&[url_as_obj]);
+
+        let activity_vc: Retained<UIActivityViewController> = unsafe {
+            let alloc: Retained<UIActivityViewController> =
+                msg_send![objc2::class!(UIActivityViewController), alloc];
+            msg_send![
+                alloc,
+                initWithActivityItems: &*items,
+                applicationActivities: std::ptr::null::<AnyObject>()
+            ]
+        };
+
+        let root_vc = root_view_controller()?;
+        unsafe {
+            root_vc.presentViewController_animated_completion(
+                &activity_vc,
+                true,
+                None,
+            );
+        }
+
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that the bridge reports the correct platform name.
+    #[test]
+    fn platform_name() {
+        let bridge = IosBridge::new();
+        assert_eq!(bridge.platform_name(), "iOS");
+    }
+
+    // Integration tests for UI-presenting methods require a running iOS app
+    // with a key window.  They are exercised in the Xcode test target rather
+    // than via `cargo test`.
+}

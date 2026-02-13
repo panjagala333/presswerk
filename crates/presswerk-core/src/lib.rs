@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <jonathan.jewell@open.ac.uk>
+//
+// Presswerk — Core types and error definitions shared across all crates.
+
+pub mod config;
+pub mod error;
+pub mod types;
+
+pub use config::AppConfig;
+pub use error::PresswerkError;
+pub use types::*;
