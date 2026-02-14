@@ -124,7 +124,7 @@ pub fn Jobs() -> Element {
 fn status_bg(s: JobStatus) -> &'static str {
     match s {
         JobStatus::Pending | JobStatus::Held => "#f0f0f0",
-        JobStatus::Processing => "#fff3cd",
+        JobStatus::Processing | JobStatus::RetryPending => "#fff3cd",
         JobStatus::Completed => "#d4edda",
         JobStatus::Failed => "#f8d7da",
         JobStatus::Cancelled => "#e2e3e5",
@@ -134,7 +134,7 @@ fn status_bg(s: JobStatus) -> &'static str {
 fn status_fg(s: JobStatus) -> &'static str {
     match s {
         JobStatus::Pending | JobStatus::Held => "#333",
-        JobStatus::Processing => "#856404",
+        JobStatus::Processing | JobStatus::RetryPending => "#856404",
         JobStatus::Completed => "#155724",
         JobStatus::Failed => "#721c24",
         JobStatus::Cancelled => "#383d41",
@@ -145,6 +145,7 @@ fn status_text(s: JobStatus) -> &'static str {
     match s {
         JobStatus::Pending => "Pending",
         JobStatus::Processing => "Printing...",
+        JobStatus::RetryPending => "Retrying...",
         JobStatus::Completed => "Done",
         JobStatus::Failed => "Failed",
         JobStatus::Cancelled => "Cancelled",

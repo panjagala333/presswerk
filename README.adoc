@@ -13,14 +13,20 @@ toc::[]
 
 == Features
 
-* **Printer Discovery** — mDNS/DNS-SD scanning for IPP printers on the local network
-* **IPP Printing** — Full RFC 8010/8011 Internet Printing Protocol client
-* **Print Server Mode** — Phone advertises itself as a network printer; other LAN devices can print to it
-* **Document Processing** — PDF read/merge/split/rotate/crop, image resize/enhance, text-to-PDF
+* **Easy Mode UI** — 3-tap printing (Choose file → auto-select printer → PRINT); giant touch targets for elderly/children
+* **Printer Discovery** — mDNS/DNS-SD, SNMP, manual IP entry; remembers printers across restarts
+* **IPP Printing** — Full RFC 8010/8011 client with all settings (copies, duplex, colour, paper, orientation)
+* **Protocol Downgrade** — IPPS → IPP → LPR → Raw TCP; always starts from most secure
+* **Print Doctor** — 6-step diagnostic wizard (network → discovery → reachable → IPP → ready → test print)
+* **Retry Engine** — Exponential backoff with jitter, circuit breaker, network self-healing
+* **Universal Connectivity** — USB, Bluetooth, Wi-Fi Direct, NFC, Serial, Parallel, FireWire, Thunderbolt, and more
+* **Document Processing** — PDF read/merge/split/rotate/crop, image resize/enhance, text-to-PDF, format auto-conversion
 * **Document Scanning** — Camera capture with edge detection, perspective correction, binarisation, OCR
+* **Print Server Mode** — Phone advertises itself as a network printer; other LAN devices can print to it
 * **Encrypted Storage** — age (X25519) encryption at rest for all local data
 * **Audit Trail** — Append-only encrypted SQLite log of every operation
 * **Formal Verification** — Idris2 ABI proofs for protocol correctness, encryption invariants, and bridge safety
+* **Human Error Messages** — Plain English with actionable suggestions, not raw technical strings
 
 == Architecture
 
@@ -72,7 +78,7 @@ presswerk-app          (→ ALL above; dioxus with mobile feature)
 |Layer |Technology |Purpose
 
 |UI Framework |Dioxus 0.7+ |Pure Rust, React-like, mobile-native
-|Print Protocol |Raw IPP/1.1 (RFC 8010/8011) |1936-line server + 276-line client
+|Print Protocol |IPP/1.1 + LPR + Raw TCP |Protocol downgrade chain, retry engine
 |Discovery |mdns-sd |mDNS/DNS-SD printer scanning
 |PDF |lopdf + printpdf |Read/write/manipulate PDFs
 |Image |image + imageproc |Processing pipeline

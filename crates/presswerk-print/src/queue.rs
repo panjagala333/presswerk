@@ -13,7 +13,7 @@ use rusqlite::{Connection, params};
 use tracing::{debug, info, instrument};
 
 use presswerk_core::error::{PresswerkError, Result};
-use presswerk_core::types::{DocumentType, JobId, JobSource, JobStatus, PrintJob, PrintSettings};
+use presswerk_core::types::{DocumentType, ErrorClass, JobId, JobSource, JobStatus, PrintJob, PrintSettings};
 
 /// SQLite schema for the jobs table.
 const CREATE_TABLE_SQL: &str = r#"
@@ -28,8 +28,24 @@ const CREATE_TABLE_SQL: &str = r#"
         printer_uri TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        error_message TEXT
+        error_message TEXT,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        max_retries INTEGER NOT NULL DEFAULT 5,
+        error_class TEXT,
+        error_history TEXT NOT NULL DEFAULT '[]',
+        bytes_sent INTEGER NOT NULL DEFAULT 0,
+        total_bytes INTEGER NOT NULL DEFAULT 0
     )
+"#;
+
+/// Migration to add retry/resume columns to existing databases.
+const MIGRATE_RETRY_COLUMNS_SQL: &str = r#"
+    ALTER TABLE jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE jobs ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 5;
+    ALTER TABLE jobs ADD COLUMN error_class TEXT;
+    ALTER TABLE jobs ADD COLUMN error_history TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE jobs ADD COLUMN bytes_sent INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE jobs ADD COLUMN total_bytes INTEGER NOT NULL DEFAULT 0;
 "#;
 
 /// Persistent job queue backed by a SQLite database.
@@ -59,6 +75,9 @@ impl JobQueue {
         conn.execute_batch(CREATE_TABLE_SQL)
             .map_err(|e| PresswerkError::Database(format!("create table: {e}")))?;
 
+        // Run migration for existing databases that lack retry columns.
+        Self::migrate_retry_columns(&conn);
+
         info!("job queue database opened");
         Ok(Self { conn })
     }
@@ -73,6 +92,22 @@ impl JobQueue {
 
         debug!("in-memory job queue database opened");
         Ok(Self { conn })
+    }
+
+    /// Apply retry/resume column migration to existing databases.
+    /// Silently skips if columns already exist.
+    fn migrate_retry_columns(conn: &Connection) {
+        // Each ALTER TABLE is run individually — if the column exists the
+        // statement fails harmlessly and we continue to the next.
+        for stmt in MIGRATE_RETRY_COLUMNS_SQL.split(';') {
+            let trimmed = stmt.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if conn.execute_batch(trimmed).is_err() {
+                // Column already exists — expected on migrated databases.
+            }
+        }
     }
 
     /// Insert a new print job into the queue.
@@ -90,11 +125,19 @@ impl JobQueue {
         let settings_json = serde_json::to_string(&job.settings)
             .map_err(|e| PresswerkError::Database(format!("serialize settings: {e}")))?;
 
+        let error_class_json = job
+            .error_class
+            .as_ref()
+            .map(|ec| serde_json::to_string(ec).unwrap_or_default());
+        let error_history_json = serde_json::to_string(&job.error_history)
+            .map_err(|e| PresswerkError::Database(format!("serialize error_history: {e}")))?;
+
         self.conn
             .execute(
                 "INSERT INTO jobs (id, source, status, document_type, document_name,
-                 document_hash, settings, printer_uri, created_at, updated_at, error_message)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 document_hash, settings, printer_uri, created_at, updated_at, error_message,
+                 retry_count, max_retries, error_class, error_history, bytes_sent, total_bytes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 params![
                     job.id.to_string(),
                     source_json,
@@ -107,6 +150,12 @@ impl JobQueue {
                     job.created_at.to_rfc3339(),
                     job.updated_at.to_rfc3339(),
                     job.error_message,
+                    job.retry_count,
+                    job.max_retries,
+                    error_class_json,
+                    error_history_json,
+                    job.bytes_sent as i64,
+                    job.total_bytes as i64,
                 ],
             )
             .map_err(|e| PresswerkError::Database(format!("insert job: {e}")))?;
@@ -156,7 +205,8 @@ impl JobQueue {
             .prepare(
                 "SELECT id, source, status, document_type, document_name,
                         document_hash, settings, printer_uri, created_at,
-                        updated_at, error_message
+                        updated_at, error_message, retry_count, max_retries,
+                        error_class, error_history, bytes_sent, total_bytes
                  FROM jobs WHERE id = ?1",
             )
             .map_err(|e| PresswerkError::Database(format!("prepare get_job: {e}")))?;
@@ -180,7 +230,8 @@ impl JobQueue {
             .prepare(
                 "SELECT id, source, status, document_type, document_name,
                         document_hash, settings, printer_uri, created_at,
-                        updated_at, error_message
+                        updated_at, error_message, retry_count, max_retries,
+                        error_class, error_history, bytes_sent, total_bytes
                  FROM jobs ORDER BY created_at DESC",
             )
             .map_err(|e| PresswerkError::Database(format!("prepare get_all_jobs: {e}")))?;
@@ -207,7 +258,8 @@ impl JobQueue {
             .prepare(
                 "SELECT id, source, status, document_type, document_name,
                         document_hash, settings, printer_uri, created_at,
-                        updated_at, error_message
+                        updated_at, error_message, retry_count, max_retries,
+                        error_class, error_history, bytes_sent, total_bytes
                  FROM jobs WHERE status = ?1 ORDER BY created_at ASC",
             )
             .map_err(|e| PresswerkError::Database(format!("prepare get_pending: {e}")))?;
@@ -258,6 +310,12 @@ fn row_to_print_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<PrintJob> {
     let created_at_str: String = row.get(8)?;
     let updated_at_str: String = row.get(9)?;
     let error_message: Option<String> = row.get(10)?;
+    let retry_count: u32 = row.get::<_, i32>(11).unwrap_or(0) as u32;
+    let max_retries: u32 = row.get::<_, i32>(12).unwrap_or(5) as u32;
+    let error_class_json: Option<String> = row.get(13).unwrap_or(None);
+    let error_history_json: String = row.get::<_, String>(14).unwrap_or_else(|_| "[]".into());
+    let bytes_sent: u64 = row.get::<_, i64>(15).unwrap_or(0) as u64;
+    let total_bytes: u64 = row.get::<_, i64>(16).unwrap_or(0) as u64;
 
     // Parse the UUID.  If the stored value is malformed we surface a
     // meaningful error rather than panicking.
@@ -293,6 +351,12 @@ fn row_to_print_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<PrintJob> {
             rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(e))
         })?;
 
+    let error_class: Option<ErrorClass> =
+        error_class_json.and_then(|s| serde_json::from_str(&s).ok());
+
+    let error_history: Vec<String> =
+        serde_json::from_str(&error_history_json).unwrap_or_default();
+
     Ok(PrintJob {
         id: JobId(uuid),
         source,
@@ -305,6 +369,12 @@ fn row_to_print_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<PrintJob> {
         created_at,
         updated_at,
         error_message,
+        retry_count,
+        max_retries,
+        error_class,
+        error_history,
+        bytes_sent,
+        total_bytes,
     })
 }
 

@@ -58,6 +58,8 @@ pub enum JobStatus {
     Cancelled,
     /// Held for user review (e.g. network-received jobs in preview mode).
     Held,
+    /// Waiting for retry after a transient failure.
+    RetryPending,
 }
 
 /// Supported input document types.
@@ -68,6 +70,12 @@ pub enum DocumentType {
     Png,
     Tiff,
     PlainText,
+    /// PostScript (auto-converted from PDF for legacy printers).
+    PostScript,
+    /// PCL (Printer Command Language, legacy support).
+    Pcl,
+    /// PWG Raster (rendered page images, ultimate fallback).
+    PwgRaster,
     /// Format delegated to native OS print dialog (DOCX, XLS, etc.)
     NativeDelegate,
 }
@@ -81,6 +89,9 @@ impl DocumentType {
             Self::Png => "image/png",
             Self::Tiff => "image/tiff",
             Self::PlainText => "text/plain",
+            Self::PostScript => "application/postscript",
+            Self::Pcl => "application/vnd.hp-pcl",
+            Self::PwgRaster => "image/pwg-raster",
             Self::NativeDelegate => "application/octet-stream",
         }
     }
@@ -93,6 +104,8 @@ impl DocumentType {
             "png" => Some(Self::Png),
             "tif" | "tiff" => Some(Self::Tiff),
             "txt" => Some(Self::PlainText),
+            "ps" | "eps" => Some(Self::PostScript),
+            "pcl" => Some(Self::Pcl),
             "docx" | "doc" | "xlsx" | "xls" | "pptx" | "ppt" | "odt" | "ods" => {
                 Some(Self::NativeDelegate)
             }
@@ -129,6 +142,19 @@ impl PaperSize {
             } => (*width_mm, *height_mm),
         }
     }
+
+    /// IPP `media` keyword (RFC 8011 §5.2.13) for this paper size.
+    pub fn ipp_media_keyword(&self) -> &'static str {
+        match self {
+            Self::A4 => "iso_a4_210x297mm",
+            Self::A3 => "iso_a3_297x420mm",
+            Self::A5 => "iso_a5_148x210mm",
+            Self::Letter => "na_letter_8.5x11in",
+            Self::Legal => "na_legal_8.5x14in",
+            Self::Tabloid => "na_ledger_11x17in",
+            Self::Custom { .. } => "custom", // custom sizes need special handling
+        }
+    }
 }
 
 /// Duplex printing mode.
@@ -139,6 +165,17 @@ pub enum DuplexMode {
     ShortEdge,
 }
 
+impl DuplexMode {
+    /// IPP `sides` keyword (RFC 8011 §5.2.8).
+    pub fn ipp_sides_keyword(&self) -> &'static str {
+        match self {
+            Self::Simplex => "one-sided",
+            Self::LongEdge => "two-sided-long-edge",
+            Self::ShortEdge => "two-sided-short-edge",
+        }
+    }
+}
+
 /// Page orientation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Orientation {
@@ -146,6 +183,18 @@ pub enum Orientation {
     Landscape,
     ReversePortrait,
     ReverseLandscape,
+}
+
+impl Orientation {
+    /// IPP `orientation-requested` enum value (RFC 8011 §5.2.10).
+    pub fn ipp_enum_value(&self) -> i32 {
+        match self {
+            Self::Portrait => 3,
+            Self::Landscape => 4,
+            Self::ReversePortrait => 5,
+            Self::ReverseLandscape => 6,
+        }
+    }
 }
 
 /// Print settings for a job.
@@ -181,6 +230,17 @@ pub struct PageRange {
     pub end: u32,
 }
 
+/// Classification of errors for retry logic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ErrorClass {
+    /// Network blip, timeout, busy printer — safe to retry automatically.
+    Transient,
+    /// User must take action (add paper, close door, clear jam).
+    UserAction,
+    /// Permanent failure — unsupported format, invalid URI, etc.
+    Permanent,
+}
+
 /// A complete print job.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrintJob {
@@ -196,6 +256,18 @@ pub struct PrintJob {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub error_message: Option<String>,
+    /// Number of retry attempts so far.
+    pub retry_count: u32,
+    /// Maximum retries before giving up.
+    pub max_retries: u32,
+    /// Classification of the last error (for retry logic).
+    pub error_class: Option<ErrorClass>,
+    /// History of error messages from each attempt.
+    pub error_history: Vec<String>,
+    /// Bytes successfully sent (for resume support in raw/LPR protocols).
+    pub bytes_sent: u64,
+    /// Total document size in bytes.
+    pub total_bytes: u64,
 }
 
 impl PrintJob {
@@ -218,6 +290,12 @@ impl PrintJob {
             created_at: now,
             updated_at: now,
             error_message: None,
+            retry_count: 0,
+            max_retries: 5,
+            error_class: None,
+            error_history: Vec::new(),
+            bytes_sent: 0,
+            total_bytes: 0,
         }
     }
 }
@@ -235,6 +313,12 @@ pub struct DiscoveredPrinter {
     pub paper_sizes: Vec<PaperSize>,
     pub make_and_model: Option<String>,
     pub location: Option<String>,
+    /// When this printer was last seen on the network.
+    pub last_seen: DateTime<Utc>,
+    /// Whether mDNS has gone silent for this printer (grace period active).
+    pub stale: bool,
+    /// Whether this printer was added manually (IP entry) rather than via mDNS.
+    pub manually_added: bool,
 }
 
 /// Status of the embedded IPP print server.

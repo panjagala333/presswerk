@@ -106,6 +106,24 @@ pub fn Home() -> Element {
                 }
             }
 
+            // Add printer manually
+            div { style: "margin-top: 16px; text-align: center;",
+                Link {
+                    to: Route::AddPrinter {},
+                    style: "color: #007aff; font-size: 14px; text-decoration: underline;",
+                    "Add Printer Manually"
+                }
+            }
+
+            // Print Doctor link
+            div { style: "margin-top: 8px; text-align: center;",
+                Link {
+                    to: Route::Doctor {},
+                    style: "color: #007aff; font-size: 14px; text-decoration: underline;",
+                    "Having trouble? Run Print Doctor"
+                }
+            }
+
             // Status message
             if let Some(ref msg) = state.read().status_message {
                 p { style: "color: #ff9500; font-size: 14px; margin-top: 12px;", "{msg}" }

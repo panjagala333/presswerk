@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-14
+
+### Added
+
+**v0.2 "It Just Works" — Reliability Hardening**
+
+- **Print settings transmission**: IPP attributes now actually sent to printers (copies, sides, media, orientation, print-color-mode, page-ranges)
+- **Human error messages**: Plain English error taxonomy — Transient, ActionRequired, Permanent, BuyRequired — with suggestions, not raw strings
+- **Retry engine**: Exponential backoff with jitter (max 5 retries, 2s–120s), error classification (Transient/UserAction/Permanent)
+- **Connection timeouts**: 60s for print operations, 15s for queries (was: infinite hang)
+- **Circuit breaker**: Per-printer health tracking — 3 failures opens circuit for 30s, 5 for 2min, 10 for 5min
+- **Discovery improvements**: 15-second browse (was 5s), 30-second stale grace period, known_printers.json persistence
+- **Manual printer entry**: IP:port form with IPPS-first probe (validates via Get-Printer-Attributes)
+- **Capability validation**: Queries printer's media-supported, sides-supported, color-supported, document-format-supported; auto-corrects impossible settings with user notice
+- **Progress feedback**: Multi-stage print progress (Preparing → Sending → Confirming → Complete/Failed/Retrying)
+- **Print Doctor wizard**: 6-step end-to-end diagnostic pipeline (network → discovery → reachable → IPP → ready → test print) with shareable text summary for helpers
+- **Lock poisoning recovery**: `acquire_lock()` helper recovers from mutex poison via `into_inner()`
+
+**v0.3 "Guaranteed Success" — Universal Printer Support**
+
+- **Protocol downgrade**: IPPS → IPP/1.1 → IPP/1.0 → LPR/LPD (RFC 1179) → Raw TCP (port 9100), always starting from most secure
+- **Document format conversion**: PDF → PostScript → PCL → PWG Raster chain, auto-selects best format from printer's capabilities
+- **Smart settings correction**: Auto-corrects invalid settings with yellow notice cards explaining each change
+- **Legacy printer support**: USB (IPP-USB + Printer Class), Bluetooth (BPP/HCRP/SPP), Wi-Fi Direct, NFC handover, plus Serial, Parallel, FireWire, Lightning, Thunderbolt, Infrared, iBeacon, LiFi, USB memory stick
+- **Network self-healing**: Buffers jobs during offline, auto-delivers on reconnect
+- **Dead printer revival**: Wake-on-LAN magic packets, SNMP status probes, IPP Purge-Jobs for stuck spoolers
+- **Print job resumption**: Byte-level tracking (bytes_sent/total_bytes) for raw/LPR resume
+- **Easy Mode UI**: 3-tap printing (Choose file → auto-select printer → PRINT), giant 80px+ touch targets, 24px+ text, default interface for Print Doctor
+- **Easy Jobs page**: Simplified job status with emoji icons (printing.../done!/problem)
+- **Text editor**: Create plain text, export PDF, print directly
+
+**Developer Resources**
+
+- **Printer specifications reference**: `docs/specifications/PRINTER-SPECIFICATIONS.adoc` — 60+ specs across 18 categories (IPP, mDNS, LPR, USB, Bluetooth, NFC, Wi-Fi Direct, SNMP, PDLs, etc.)
+
+### Changed
+
+- Workspace version bumped from 0.1.0 to 0.3.0
+- Containerfile image version updated to 0.3.0
+- `color_supported` defaults to `true` when printer doesn't report capability (same pattern as media/sides)
+
+### Fixed
+
+- Print settings silently discarded (SHOWSTOPPER — settings never reached the printer)
+- Clippy warnings: redundant closures, manual clamp, manual char comparison, missing Default impls, redundant pattern matching, dead code annotations
+
 ## [0.1.0] - 2026-02-14
 
 ### Added

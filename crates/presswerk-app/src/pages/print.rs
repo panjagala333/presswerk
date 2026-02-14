@@ -2,13 +2,62 @@
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <jonathan.jewell@open.ac.uk>
 //
 // Print page — pick a file, select printer, configure settings, print.
+// Settings are now fully wired: copies, color, duplex, paper size, orientation
+// are all sent as IPP attributes to the printer.
 
 use dioxus::prelude::*;
 
-use presswerk_core::types::DocumentType;
+use presswerk_core::types::{DocumentType, DuplexMode, Orientation, PaperSize, PrintSettings};
 
 use crate::services::app_services::AppServices;
 use crate::state::AppState;
+
+/// Print progress stages shown to the user.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
+enum PrintStage {
+    Idle,
+    Preparing,
+    CheckingPrinter,
+    Sending,
+    Confirming,
+    Complete,
+    Failed,
+    Retrying,
+}
+
+impl PrintStage {
+    fn message(&self) -> &'static str {
+        match self {
+            Self::Idle => "",
+            Self::Preparing => "Preparing your document...",
+            Self::CheckingPrinter => "Checking the printer is ready...",
+            Self::Sending => "Sending to printer...",
+            Self::Confirming => "Confirming with the printer...",
+            Self::Complete => "Done! Your document is printing.",
+            Self::Failed => "Something went wrong.",
+            Self::Retrying => "Trying again...",
+        }
+    }
+
+    fn color(&self) -> &'static str {
+        match self {
+            Self::Complete => "#155724",
+            Self::Failed => "#721c24",
+            Self::Retrying => "#856404",
+            _ => "#007aff",
+        }
+    }
+
+    fn bg(&self) -> &'static str {
+        match self {
+            Self::Complete => "#d4edda",
+            Self::Failed => "#f8d7da",
+            Self::Retrying => "#fff3cd",
+            _ => "#e7f3ff",
+        }
+    }
+}
 
 #[component]
 pub fn Print() -> Element {
@@ -19,6 +68,14 @@ pub fn Print() -> Element {
     let mut file_type = use_signal(|| DocumentType::Pdf);
     let mut printing = use_signal(|| false);
     let mut print_result = use_signal(|| Option::<String>::None);
+    let mut stage = use_signal(|| PrintStage::Idle);
+
+    // Print settings — bound to the UI inputs
+    let mut copies = use_signal(|| 1u32);
+    let mut color = use_signal(|| true);
+    let mut duplex = use_signal(|| DuplexMode::Simplex);
+    let mut paper_size = use_signal(|| PaperSize::A4);
+    let mut orientation = use_signal(|| Orientation::Portrait);
 
     rsx! {
         div {
@@ -36,6 +93,7 @@ pub fn Print() -> Element {
                                 file_name.set(None);
                                 file_bytes.set(None);
                                 print_result.set(None);
+                                stage.set(PrintStage::Idle);
                             },
                             "Clear"
                         }
@@ -44,7 +102,6 @@ pub fn Print() -> Element {
                     button {
                         style: "padding: 12px 24px; border-radius: 8px; border: 1px solid #007aff; color: #007aff; background: white; font-size: 16px;",
                         onclick: move |_| {
-                            // Desktop: use rfd file dialog
                             #[cfg(not(any(target_os = "ios", target_os = "android")))]
                             {
                                 if let Some(path) = rfd::FileDialog::new()
@@ -70,12 +127,11 @@ pub fn Print() -> Element {
                                         }
                                         Err(e) => {
                                             tracing::error!(error = %e, "failed to read file");
-                                            print_result.set(Some(format!("Error reading file: {e}")));
+                                            print_result.set(Some(format!("Could not read that file. {e}")));
                                         }
                                     }
                                 }
                             }
-                            // Mobile: will use native bridge (TODO)
                             #[cfg(any(target_os = "ios", target_os = "android"))]
                             {
                                 tracing::info!("file picker: use native bridge on mobile");
@@ -112,20 +168,83 @@ pub fn Print() -> Element {
                 }
             }
 
-            // Print settings
+            // Print settings — fully wired
             section { style: "margin: 16px 0;",
                 h3 { "3. Settings" }
-                div { style: "display: grid; grid-template-columns: 1fr 1fr; gap: 8px;",
+                div { style: "display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;",
                     label { "Copies:" }
-                    input { r#type: "number", value: "1", min: "1", max: "99",
-                        style: "padding: 4px; border: 1px solid #ccc; border-radius: 4px;" }
+                    input {
+                        r#type: "number",
+                        value: "{copies}",
+                        min: "1",
+                        max: "99",
+                        style: "padding: 4px; border: 1px solid #ccc; border-radius: 4px;",
+                        onchange: move |evt| {
+                            if let Ok(n) = evt.value().parse::<u32>() {
+                                copies.set(n.clamp(1, 99));
+                            }
+                        },
+                    }
+
                     label { "Color:" }
-                    input { r#type: "checkbox", checked: true }
+                    input {
+                        r#type: "checkbox",
+                        checked: *color.read(),
+                        onchange: move |evt| {
+                            color.set(evt.checked());
+                        },
+                    }
+
                     label { "Duplex:" }
-                    select { style: "padding: 4px; border: 1px solid #ccc; border-radius: 4px;",
+                    select {
+                        style: "padding: 4px; border: 1px solid #ccc; border-radius: 4px;",
+                        onchange: move |evt| {
+                            let val = evt.value().to_string();
+                            duplex.set(match val.as_str() {
+                                "long-edge" => DuplexMode::LongEdge,
+                                "short-edge" => DuplexMode::ShortEdge,
+                                _ => DuplexMode::Simplex,
+                            });
+                        },
                         option { value: "simplex", "One-sided" }
                         option { value: "long-edge", "Two-sided (long edge)" }
                         option { value: "short-edge", "Two-sided (short edge)" }
+                    }
+
+                    label { "Paper:" }
+                    select {
+                        style: "padding: 4px; border: 1px solid #ccc; border-radius: 4px;",
+                        onchange: move |evt| {
+                            let val = evt.value().to_string();
+                            paper_size.set(match val.as_str() {
+                                "A3" => PaperSize::A3,
+                                "A5" => PaperSize::A5,
+                                "Letter" => PaperSize::Letter,
+                                "Legal" => PaperSize::Legal,
+                                "Tabloid" => PaperSize::Tabloid,
+                                _ => PaperSize::A4,
+                            });
+                        },
+                        option { value: "A4", "A4" }
+                        option { value: "A3", "A3" }
+                        option { value: "A5", "A5" }
+                        option { value: "Letter", "Letter" }
+                        option { value: "Legal", "Legal" }
+                        option { value: "Tabloid", "Tabloid" }
+                    }
+
+                    label { "Orientation:" }
+                    select {
+                        style: "padding: 4px; border: 1px solid #ccc; border-radius: 4px;",
+                        onchange: move |evt| {
+                            let val = evt.value().to_string();
+                            orientation.set(match val.as_str() {
+                                "landscape" => Orientation::Landscape,
+                                _ => Orientation::Portrait,
+                            });
+                        },
+                        option { value: "portrait", "Portrait" }
+                        option { value: "landscape", "Landscape" }
                     }
                 }
             }
@@ -142,24 +261,39 @@ pub fn Print() -> Element {
                         let printer_uri = state.read().selected_printer.clone();
                         let doc_type = *file_type.read();
 
+                        let settings = PrintSettings {
+                            copies: *copies.read(),
+                            paper_size: *paper_size.read(),
+                            duplex: *duplex.read(),
+                            orientation: *orientation.read(),
+                            color: *color.read(),
+                            page_range: None,
+                            scale_to_fit: true,
+                        };
+
                         if let (Some(bytes), Some(name), Some(uri)) = (doc_bytes, doc_name, printer_uri) {
                             printing.set(true);
-                            print_result.set(Some("Sending to printer...".into()));
+                            stage.set(PrintStage::Preparing);
+                            print_result.set(None);
                             let svc = svc.clone();
 
                             spawn(async move {
-                                match svc.print_document(bytes, name, doc_type, uri).await {
+                                stage.set(PrintStage::Sending);
+                                match svc.print_document(bytes, name, doc_type, uri, settings).await {
                                     Ok(job_id) => {
                                         tracing::info!(job_id = %job_id, "print job submitted");
+                                        stage.set(PrintStage::Complete);
                                         print_result.set(Some(format!("Job submitted: {job_id}")));
-                                        // Refresh jobs list
                                         if let Ok(jobs) = svc.all_jobs() {
                                             state.write().jobs = jobs;
                                         }
                                     }
                                     Err(e) => {
                                         tracing::error!(error = %e, "print failed");
-                                        print_result.set(Some(format!("Print failed: {e}")));
+                                        stage.set(PrintStage::Failed);
+                                        print_result.set(Some(
+                                            presswerk_core::human_errors::humanize_error(&e).message,
+                                        ));
                                     }
                                 }
                                 printing.set(false);
@@ -170,10 +304,32 @@ pub fn Print() -> Element {
                 if *printing.read() { "Printing..." } else { "Print" }
             }
 
-            // Result message
-            if let Some(ref msg) = *print_result.read() {
-                p { style: "margin-top: 12px; color: #666; font-size: 14px; text-align: center;",
-                    "{msg}"
+            // Progress feedback
+            if *stage.read() != PrintStage::Idle {
+                {
+                    let current_stage = *stage.read();
+                    rsx! {
+                        div {
+                            style: "margin-top: 16px; padding: 16px; border-radius: 12px; background: {current_stage.bg()}; text-align: center;",
+                            p { style: "color: {current_stage.color()}; font-size: 16px; font-weight: bold; margin: 0;",
+                                "{current_stage.message()}"
+                            }
+                            if let Some(ref msg) = *print_result.read() {
+                                p { style: "color: #666; font-size: 14px; margin-top: 8px;",
+                                    "{msg}"
+                                }
+                            }
+                            if current_stage == PrintStage::Failed {
+                                div { style: "margin-top: 12px;",
+                                    Link {
+                                        to: crate::Route::Doctor {},
+                                        style: "color: #007aff; text-decoration: underline; font-size: 14px;",
+                                        "Having trouble? Run Print Doctor"
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

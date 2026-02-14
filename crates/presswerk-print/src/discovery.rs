@@ -13,6 +13,7 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chrono::Utc;
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use tracing::{debug, info, warn};
 
@@ -26,7 +27,8 @@ const IPP_SERVICE: &str = "_ipp._tcp.local.";
 const IPPS_SERVICE: &str = "_ipps._tcp.local.";
 
 /// Default browse duration before the initial snapshot is returned.
-const DEFAULT_BROWSE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Increased from 5s to 15s to catch slow printers.
+const DEFAULT_BROWSE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Printer discovery engine using mDNS-SD.
 ///
@@ -128,7 +130,7 @@ impl PrinterDiscovery {
     pub fn printers(&self) -> Vec<DiscoveredPrinter> {
         self.printers
             .lock()
-            .expect("printer map lock poisoned")
+            .unwrap_or_else(|p| p.into_inner())
             .values()
             .cloned()
             .collect()
@@ -185,7 +187,7 @@ impl PrinterDiscovery {
                                     );
                                     printers
                                         .lock()
-                                        .expect("printer map lock poisoned")
+                                        .unwrap_or_else(|p| p.into_inner())
                                         .insert(fullname, printer);
                                 }
                                 Err(e) => {
@@ -201,7 +203,7 @@ impl PrinterDiscovery {
                             info!(service_type = %stype, name = %fullname, "printer removed");
                             printers
                                 .lock()
-                                .expect("printer map lock poisoned")
+                                .unwrap_or_else(|p| p.into_inner())
                                 .remove(&fullname);
                         }
                         ServiceEvent::SearchStopped(stype) => {
@@ -264,6 +266,9 @@ fn service_info_to_printer(info: &ServiceInfo, tls: bool) -> Result<DiscoveredPr
         paper_sizes: Vec::new(), // determined later via Get-Printer-Attributes
         make_and_model,
         location,
+        last_seen: Utc::now(),
+        stale: false,
+        manually_added: false,
     })
 }
 

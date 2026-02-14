@@ -78,6 +78,7 @@ pub fn TextEditor() -> Element {
                                         "Text Document.txt".into(),
                                         DocumentType::PlainText,
                                         uri,
+                                        presswerk_core::types::PrintSettings::default(),
                                     ).await {
                                         Ok(job_id) => {
                                             status_msg.set(Some(format!("Print job submitted: {job_id}")));

@@ -13,13 +13,13 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Jonathan D.A. Jewell <jonathan.jewell@open.ac.uk>"]
 license = "PMPL-1.0-or-later"
 repository = "https://github.com/hyperpolymath/presswerk"
 homepage = "https://github.com/hyperpolymath/presswerk"
-description = "High-assurance local print router/server with IPP, mDNS, document scanning, and Idris2 ABI verification"
+description = "Print Doctor (Presswerk engine) — high-assurance local print router/server with IPP, mDNS, document scanning, and Idris2 ABI verification"
 keywords = ["ipp", "printing", "mdns", "mobile", "formal-verification"]
 categories = ["network-programming", "multimedia::images"]
 rust-version = "1.85"

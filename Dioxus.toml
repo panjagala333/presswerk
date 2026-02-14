@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: PMPL-1.0-or-later
-# Presswerk — Dioxus CLI Configuration
+# Print Doctor (Presswerk engine) — Dioxus CLI Configuration
 
 [application]
 name = "presswerk"
@@ -9,17 +9,17 @@ default_platform = "desktop"
 path = "assets"
 
 [desktop]
-title = "Presswerk"
+title = "Print Doctor"
 
 [mobile]
 # iOS
 [mobile.ios]
-bundle_id = "org.hyperpolymath.presswerk"
+bundle_id = "org.hyperpolymath.printdoctor"
 minimum_os_version = "16.0"
 team_id = ""
 
 # Android
 [mobile.android]
-package = "org.hyperpolymath.presswerk"
+package = "org.hyperpolymath.printdoctor"
 min_sdk_version = 26
 target_sdk_version = 34

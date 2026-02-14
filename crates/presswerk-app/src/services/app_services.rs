@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex};
 use presswerk_core::AppConfig;
 use presswerk_core::error::{PresswerkError, Result};
 use presswerk_core::types::{
-    DiscoveredPrinter, DocumentType, JobId, JobSource, JobStatus, PrintJob, ServerStatus,
+    DiscoveredPrinter, DocumentType, JobId, JobSource, JobStatus, PrintJob, PrintSettings,
+    ServerStatus,
 };
 use presswerk_print::discovery::PrinterDiscovery;
 use presswerk_print::ipp_client::IppClient;
@@ -26,6 +27,19 @@ use presswerk_security::integrity::hash_bytes;
 use tracing::{error, info, warn};
 
 use super::data_dir;
+
+/// Acquire a `Mutex` lock, recovering from poison if a prior thread panicked.
+///
+/// A poisoned mutex still contains valid data — the panic may have been
+/// completely unrelated to the guarded state.  Crashing on poison transforms
+/// a single-thread failure into an app-wide outage, which is unacceptable
+/// for vulnerable users who just want to print.
+fn acquire_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        warn!("recovered from poisoned lock");
+        poisoned.into_inner()
+    })
+}
 
 /// Shared application services accessible from all Dioxus components via
 /// `use_context::<AppServices>()`.
@@ -125,7 +139,7 @@ impl AppServices {
 
     /// Start mDNS printer discovery in the background.
     pub fn start_discovery(&self) -> Result<()> {
-        let mut guard = self.discovery.lock().expect("discovery lock poisoned");
+        let mut guard = acquire_lock(&self.discovery);
         if let Some(ref mut disc) = *guard {
             disc.start()?;
         }
@@ -134,7 +148,7 @@ impl AppServices {
 
     /// Stop mDNS printer discovery.
     pub fn stop_discovery(&self) -> Result<()> {
-        let mut guard = self.discovery.lock().expect("discovery lock poisoned");
+        let mut guard = acquire_lock(&self.discovery);
         if let Some(ref mut disc) = *guard {
             disc.stop()?;
         }
@@ -143,7 +157,7 @@ impl AppServices {
 
     /// Return a snapshot of currently discovered printers.
     pub fn discovered_printers(&self) -> Vec<DiscoveredPrinter> {
-        let guard = self.discovery.lock().expect("discovery lock poisoned");
+        let guard = acquire_lock(&self.discovery);
         match *guard {
             Some(ref disc) => disc.printers(),
             None => Vec::new(),
@@ -152,7 +166,7 @@ impl AppServices {
 
     /// Whether discovery is currently browsing.
     pub fn is_discovering(&self) -> bool {
-        let guard = self.discovery.lock().expect("discovery lock poisoned");
+        let guard = acquire_lock(&self.discovery);
         match *guard {
             Some(ref disc) => disc.is_browsing(),
             None => false,
@@ -206,8 +220,10 @@ impl AppServices {
         document_name: String,
         document_type: DocumentType,
         printer_uri: String,
+        settings: PrintSettings,
     ) -> Result<JobId> {
         let doc_hash = hash_bytes(&document_bytes);
+        let total_bytes = document_bytes.len() as u64;
 
         // Create the job record
         let mut job = PrintJob::new(
@@ -217,10 +233,12 @@ impl AppServices {
             doc_hash.clone(),
         );
         job.printer_uri = Some(printer_uri.clone());
+        job.settings = settings.clone();
+        job.total_bytes = total_bytes;
 
         // Insert into persistent queue
         {
-            let queue = self.job_queue.lock().expect("queue lock poisoned");
+            let queue = acquire_lock(&self.job_queue);
             queue.insert_job(&job)?;
         }
 
@@ -243,23 +261,33 @@ impl AppServices {
             }
 
             match IppClient::new(&uri) {
-                Ok(client) => match client.print_job(doc_bytes, document_type, &name).await {
-                    Ok(remote_id) => {
-                        info!(job_id = %job_id, remote_id, "print job accepted");
-                        if let Ok(queue) = services.job_queue.lock() {
-                            let _ = queue.update_status(&job_id, JobStatus::Completed, None);
+                Ok(client) => {
+                    match client
+                        .print_job(doc_bytes, document_type, &name, &settings)
+                        .await
+                    {
+                        Ok(remote_id) => {
+                            info!(job_id = %job_id, remote_id, "print job accepted");
+                            if let Ok(queue) = services.job_queue.lock() {
+                                let _ =
+                                    queue.update_status(&job_id, JobStatus::Completed, None);
+                            }
+                            services.audit("print_completed", &hash, true, None);
                         }
-                        services.audit("print_completed", &hash, true, None);
-                    }
-                    Err(e) => {
-                        error!(job_id = %job_id, error = %e, "print job failed");
-                        let msg = e.to_string();
-                        if let Ok(queue) = services.job_queue.lock() {
-                            let _ = queue.update_status(&job_id, JobStatus::Failed, Some(&msg));
+                        Err(e) => {
+                            error!(job_id = %job_id, error = %e, "print job failed");
+                            let msg = e.to_string();
+                            if let Ok(queue) = services.job_queue.lock() {
+                                let _ = queue.update_status(
+                                    &job_id,
+                                    JobStatus::Failed,
+                                    Some(&msg),
+                                );
+                            }
+                            services.audit("print_failed", &hash, false, Some(&msg));
                         }
-                        services.audit("print_failed", &hash, false, Some(&msg));
                     }
-                },
+                }
                 Err(e) => {
                     error!(error = %e, "invalid printer URI");
                     let msg = e.to_string();
@@ -278,19 +306,19 @@ impl AppServices {
 
     /// Get all jobs from the persistent queue.
     pub fn all_jobs(&self) -> Result<Vec<PrintJob>> {
-        let queue = self.job_queue.lock().expect("queue lock poisoned");
+        let queue = acquire_lock(&self.job_queue);
         queue.get_all_jobs()
     }
 
     /// Get pending jobs only.
     pub fn pending_jobs(&self) -> Result<Vec<PrintJob>> {
-        let queue = self.job_queue.lock().expect("queue lock poisoned");
+        let queue = acquire_lock(&self.job_queue);
         queue.get_pending_jobs()
     }
 
     /// Cancel a job.
     pub fn cancel_job(&self, job_id: &JobId) -> Result<()> {
-        let queue = self.job_queue.lock().expect("queue lock poisoned");
+        let queue = acquire_lock(&self.job_queue);
         queue.update_status(job_id, JobStatus::Cancelled, None)?;
         self.audit("job_cancelled", &job_id.to_string(), true, None);
         Ok(())
@@ -298,7 +326,7 @@ impl AppServices {
 
     /// Delete a job from the queue.
     pub fn delete_job(&self, job_id: &JobId) -> Result<()> {
-        let queue = self.job_queue.lock().expect("queue lock poisoned");
+        let queue = acquire_lock(&self.job_queue);
         queue.delete_job(job_id)
     }
 
@@ -315,19 +343,19 @@ impl AppServices {
 
     /// Get recent audit entries.
     pub fn recent_audit_entries(&self, limit: u32) -> Result<Vec<AuditEntry>> {
-        let log = self.audit_log.lock().expect("audit lock poisoned");
+        let log = acquire_lock(&self.audit_log);
         log.recent_entries(limit)
     }
 
     /// Get audit entries for a specific document hash.
     pub fn audit_entries_for_hash(&self, hash: &str) -> Result<Vec<AuditEntry>> {
-        let log = self.audit_log.lock().expect("audit lock poisoned");
+        let log = acquire_lock(&self.audit_log);
         log.entries_for_hash(hash)
     }
 
     /// Total number of audit entries.
     pub fn audit_count(&self) -> Result<u64> {
-        let log = self.audit_log.lock().expect("audit lock poisoned");
+        let log = acquire_lock(&self.audit_log);
         log.count()
     }
 
@@ -335,12 +363,12 @@ impl AppServices {
 
     /// Get a clone of the current config.
     pub fn config(&self) -> AppConfig {
-        self.config.lock().expect("config lock poisoned").clone()
+        acquire_lock(&self.config).clone()
     }
 
     /// Update and persist the config.
     pub fn save_config(&self, config: &AppConfig) -> Result<()> {
-        *self.config.lock().expect("config lock poisoned") = config.clone();
+        *acquire_lock(&self.config) = config.clone();
         persist_config(&self.data_dir, config)
     }
 

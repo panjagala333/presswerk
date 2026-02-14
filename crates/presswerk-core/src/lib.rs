@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod error;
+pub mod human_errors;
 pub mod types;
 
 pub use config::AppConfig;

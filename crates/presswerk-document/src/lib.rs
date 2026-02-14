@@ -7,6 +7,7 @@
 // (resize, rotate, crop, grayscale, brightness adjustment), and a scanning pipeline
 // (binarization, enhancement, scan-to-PDF conversion).
 
+pub mod convert;
 pub mod image;
 pub mod pdf;
 pub mod scan;

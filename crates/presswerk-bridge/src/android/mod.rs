@@ -904,6 +904,80 @@ impl NativeShare for AndroidBridge {
         tracing::info!(path, mime = mime_type, "Android: share intent dispatched");
         Ok(())
     }
+
+    /// Share text content via the Android share sheet.
+    fn share_text(&self, text: &str) -> Result<()> {
+        let mut env = jni_env()?;
+        let activity = activity()?;
+
+        tracing::info!("Android: sharing text via ACTION_SEND");
+
+        let j_action: JString = env
+            .new_string("android.intent.action.SEND")
+            .map_err(|e| jni_err("new_string(ACTION_SEND_TEXT)", e))?;
+
+        let intent: JObject = env
+            .new_object(
+                "android/content/Intent",
+                "(Ljava/lang/String;)V",
+                &[JValue::Object(&j_action)],
+            )
+            .map_err(|e| jni_err("new Intent(SEND_TEXT)", e))?;
+
+        let j_mime: JString = env
+            .new_string("text/plain")
+            .map_err(|e| jni_err("new_string(text/plain)", e))?;
+
+        env.call_method(
+            &intent,
+            "setType",
+            "(Ljava/lang/String;)Landroid/content/Intent;",
+            &[JValue::Object(&j_mime)],
+        )
+        .map_err(|e| jni_err("setType(text)", e))?;
+
+        let j_extra_text: JString = env
+            .new_string("android.intent.extra.TEXT")
+            .map_err(|e| jni_err("new_string(EXTRA_TEXT)", e))?;
+
+        let j_text: JString = env
+            .new_string(text)
+            .map_err(|e| jni_err("new_string(text_content)", e))?;
+
+        env.call_method(
+            &intent,
+            "putExtra",
+            "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;",
+            &[JValue::Object(&j_extra_text), JValue::Object(&j_text)],
+        )
+        .map_err(|e| jni_err("putExtra(EXTRA_TEXT)", e))?;
+
+        let j_title: JString = env
+            .new_string("Share via")
+            .map_err(|e| jni_err("new_string(chooser_title_text)", e))?;
+
+        let chooser: JObject = env
+            .call_static_method(
+                "android/content/Intent",
+                "createChooser",
+                "(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;",
+                &[JValue::Object(&intent), JValue::Object(&j_title)],
+            )
+            .map_err(|e| jni_err("Intent.createChooser(text)", e))?
+            .l()
+            .map_err(|e| jni_err("createChooser->l(text)", e))?;
+
+        env.call_method(
+            &activity,
+            "startActivity",
+            "(Landroid/content/Intent;)V",
+            &[JValue::Object(&chooser)],
+        )
+        .map_err(|e| jni_err("startActivity(share_text)", e))?;
+
+        tracing::info!("Android: text share intent dispatched");
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -949,4 +1023,135 @@ fn get_authority(env: &mut JNIEnv<'_>, activity: &JObject<'_>) -> Result<String>
         .into();
 
     Ok(format!("{pkg}.fileprovider"))
+}
+
+
+// ---------------------------------------------------------------------------
+// Stub implementations for connection types not yet wired to Android APIs
+// ---------------------------------------------------------------------------
+
+impl NativeUsbPrint for AndroidBridge {
+    fn detect_usb_printers(&self) -> Result<Vec<UsbPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_usb(&self, _device_id: &str, _document: &[u8], _mime_type: &str) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeBluetoothPrint for AndroidBridge {
+    fn scan_bluetooth_printers(&self) -> Result<Vec<BluetoothPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_bluetooth(&self, _device_id: &str, _document: &[u8]) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeNfcPrint for AndroidBridge {
+    fn read_nfc_printer_tag(&self) -> Result<Option<NfcPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeConnectivity for AndroidBridge {
+    fn wifi_ssid(&self) -> Result<Option<String>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn supports_wifi_direct(&self) -> bool {
+        false
+    }
+
+    fn discover_wifi_direct_printers(&self) -> Result<Vec<WifiDirectPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeFireWirePrint for AndroidBridge {
+    fn detect_firewire_printers(&self) -> Result<Vec<FireWirePrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_firewire(&self, _device_id: &str, _document: &[u8], _mime_type: &str) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeLightningPrint for AndroidBridge {
+    fn detect_lightning_printers(&self) -> Result<Vec<LightningPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_lightning(&self, _device_id: &str, _document: &[u8], _mime_type: &str) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeThunderboltPrint for AndroidBridge {
+    fn detect_thunderbolt_printers(&self) -> Result<Vec<ThunderboltPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_thunderbolt(&self, _device_id: &str, _document: &[u8], _mime_type: &str) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeSerialPrint for AndroidBridge {
+    fn detect_serial_printers(&self) -> Result<Vec<SerialPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_serial(&self, _port: &str, _baud_rate: u32, _document: &[u8]) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeParallelPrint for AndroidBridge {
+    fn detect_parallel_printers(&self) -> Result<Vec<ParallelPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_parallel(&self, _port: &str, _document: &[u8]) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeInfraredPrint for AndroidBridge {
+    fn scan_infrared_printers(&self) -> Result<Vec<InfraredPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_infrared(&self, _device_id: &str, _document: &[u8]) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeIBeaconDiscover for AndroidBridge {
+    fn scan_ibeacon_printers(&self) -> Result<Vec<IBeaconPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeLiFiPrint for AndroidBridge {
+    fn detect_lifi_endpoints(&self) -> Result<Vec<LiFiEndpointInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_lifi(&self, _endpoint_id: &str, _document: &[u8]) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeUsbDrivePrint for AndroidBridge {
+    fn detect_usb_drives(&self) -> Result<Vec<UsbDriveInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn copy_to_usb_drive(&self, _drive_id: &str, _document: &[u8], _filename: &str) -> Result<String> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
 }

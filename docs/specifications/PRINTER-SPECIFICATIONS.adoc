@@ -1,0 +1,623 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <jonathan.jewell@open.ac.uk>
+//
+// Printer Interoperability Specifications Reference
+// For Presswerk/Print Doctor developers.
+
+= Printer Interoperability Specifications Reference
+Jonathan D.A. Jewell <jonathan.jewell@open.ac.uk>
+:revdate: 2026-02-14
+:toc: left
+:toclevels: 3
+:sectnums:
+:icons: font
+:source-highlighter: rouge
+
+== Purpose
+
+This document catalogues every specification governing printer interoperability
+that is relevant to the Presswerk engine (Print Doctor). Developers MUST consult
+the primary specification text before implementing any protocol or format handler.
+
+Links point to the canonical source. Where a specification is paywalled (IEEE, ISO),
+the freely-available RFC or PWG equivalent is listed instead.
+
+== 1. Internet Printing Protocol (IPP)
+
+IPP is the primary protocol used by Presswerk. All modern network printers speak it.
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://datatracker.ietf.org/doc/html/rfc8011[RFC 8011]
+| Internet Printing Protocol/1.1: Model and Semantics
+| Core IPP semantics — operations, attributes, status codes. **Read this first.**
+
+| https://datatracker.ietf.org/doc/html/rfc8010[RFC 8010]
+| Internet Printing Protocol/1.1: Encoding and Transport
+| Binary encoding format over HTTP POST. `application/ipp` content type.
+
+| https://datatracker.ietf.org/doc/html/rfc3382[RFC 3382]
+| Internet Printing Protocol (IPP): The "collection" Attribute Syntax
+| Collection attributes (e.g. `media-col` for paper size with margins).
+
+| https://datatracker.ietf.org/doc/html/rfc3510[RFC 3510]
+| Internet Printing Protocol/1.1: IPP URL Scheme
+| `ipp://` and `ipps://` URI format.
+
+| https://datatracker.ietf.org/doc/html/rfc3995[RFC 3995]
+| Internet Printing Protocol (IPP): Event Notifications and Subscriptions
+| Push/pull notification of job state changes.
+
+| https://datatracker.ietf.org/doc/html/rfc3996[RFC 3996]
+| Internet Printing Protocol (IPP): The `indp` Delivery Method
+| Delivery method for IPP notifications.
+
+| https://datatracker.ietf.org/doc/html/rfc3998[RFC 3998]
+| Internet Printing Protocol (IPP): Job and Printer Administrative Operations
+| Pause-Printer, Resume-Printer, Purge-Jobs, etc.
+
+| https://datatracker.ietf.org/doc/html/rfc7472[RFC 7472]
+| Internet Printing Protocol (IPP) over HTTPS Transport Binding and the 'ipps' URI Scheme
+| TLS binding. **Presswerk always tries IPPS first.**
+
+| https://ftp.pwg.org/pub/pwg/candidates/cs-ippjobprinterext3v10-20120727-5100.13.pdf[PWG 5100.13]
+| IPP: Job and Printer Extensions – Set 3
+| `job-password`, `job-save-disposition`, `proof-print` attributes.
+
+| https://ftp.pwg.org/pub/pwg/candidates/cs-ipp20-20151030-5100.12.pdf[PWG 5100.12]
+| IPP 2.0, 2.1, and 2.2
+| Feature sets for IPP versions. Presswerk targets IPP 2.0 minimum.
+
+| https://ftp.pwg.org/pub/pwg/candidates/cs-ippinfra10-20150619-5100.18.pdf[PWG 5100.18]
+| IPP Shared Infrastructure Extensions (INFRA)
+| Cloud/infrastructure printing. Relevant for future Print Doctor cloud relay.
+
+| https://ftp.pwg.org/pub/pwg/candidates/cs-ippsystem10-20191122-5100.22.pdf[PWG 5100.22]
+| IPP System Service
+| System-level operations (Get-System-Attributes, etc.)
+|===
+
+=== IPP Attributes Presswerk Sends
+
+[source]
+----
+copies                   (integer)     — RFC 8011 §5.2.5
+sides                    (keyword)     — RFC 8011 §5.2.8 (one-sided, two-sided-long-edge, two-sided-short-edge)
+media                    (keyword)     — RFC 8011 §5.2.13 (iso_a4_210x297mm, na_letter_8.5x11in, etc.)
+orientation-requested    (enum)        — RFC 8011 §5.2.10 (3=portrait, 4=landscape)
+print-color-mode         (keyword)     — PWG 5100.13 (auto, color, monochrome)
+page-ranges              (rangeOfInteger) — RFC 8011 §5.2.7
+document-format          (mimeMediaType) — RFC 8011 §5.2.2
+----
+
+== 2. Service Discovery
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://datatracker.ietf.org/doc/html/rfc6762[RFC 6762]
+| Multicast DNS
+| mDNS — `.local` name resolution. Core discovery mechanism.
+
+| https://datatracker.ietf.org/doc/html/rfc6763[RFC 6763]
+| DNS-Based Service Discovery (DNS-SD)
+| Service browsing via `_ipp._tcp` and `_ipps._tcp` PTR records.
+
+| https://datatracker.ietf.org/doc/html/rfc2782[RFC 2782]
+| DNS SRV Records
+| SRV record format used by DNS-SD for host/port resolution.
+
+| https://datatracker.ietf.org/doc/html/rfc6125[RFC 6125]
+| Representation and Verification of Domain-Based Application Service Identity within Internet Public Key Infrastructure Using X.509 (PKIX) Certificates in the Context of Transport Layer Security (TLS)
+| TLS certificate validation for IPPS printers.
+
+| http://www.interlinkelectronics.com/assets/Bonjour_Overview_of_Bonjour.pdf[Apple Bonjour]
+| Bonjour Overview
+| Apple's mDNS/DNS-SD implementation. AirPrint printers register via Bonjour.
+|===
+
+=== DNS-SD Service Types for Printers
+
+[source]
+----
+_ipp._tcp        — IPP printer (port 631)
+_ipps._tcp       — IPP over TLS (port 631)
+_printer._tcp    — LPR printer (port 515)
+_pdl-datastream._tcp — Raw/JetDirect (port 9100)
+_http._tcp       — HTTP admin interface
+_scanner._tcp    — Network scanner (WSD or eSCL)
+_uscan._tcp      — Apple eSCL scanner
+_uscans._tcp     — Apple eSCL scanner over TLS
+----
+
+== 3. Legacy Print Protocols
+
+Presswerk supports protocol downgrade for old printers: IPPS → IPP → LPR → Raw TCP.
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://datatracker.ietf.org/doc/html/rfc1179[RFC 1179]
+| Line Printer Daemon Protocol (LPR/LPD)
+| Port 515. Queue-based. No job attributes beyond queue name. **Fallback #1.**
+
+| (No formal RFC)
+| HP JetDirect / Raw TCP (AppSocket)
+| Port 9100. Raw byte stream, no framing. Printer must infer format. **Fallback #2.**
+
+| https://docs.microsoft.com/en-us/windows-hardware/drivers/print/ws-print-v1-1[WS-Print]
+| Web Services on Devices — Print (WSD)
+| SOAP/XML over HTTP. Windows-native. Some enterprise printers only support this.
+
+| https://datatracker.ietf.org/doc/html/rfc2228[RFC 2228]
+| FTP Security Extensions
+| Some industrial printers accept files via FTP. Rare.
+|===
+
+== 4. Page Description Languages (PDLs)
+
+Presswerk auto-converts documents to the best PDL the target printer supports.
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf[ISO 32000-1:2008]
+| PDF 1.7 (Portable Document Format)
+| Primary document format. Most modern printers accept `application/pdf`.
+
+| https://www.adobe.com/products/postscript/pdfs/PLRM.pdf[PostScript Language Reference (3rd ed.)]
+| PostScript Level 3
+| Stack-based page description. Many laser printers prefer PS over PDF.
+
+| https://www.hp.com/ctg/Manual/bpl13210.pdf[HP PCL 5]
+| Printer Command Language Level 5
+| HP's page description language. Very widely supported on laser printers.
+
+| https://www.hp.com/hpinfo/globalcitizenship/environment/productdata/Technical/pclxl_rm_20050625.pdf[PCL 6 / PCL XL]
+| PCL XL (PCL 6 Enhanced)
+| Binary-format evolution of PCL. Faster to parse.
+
+| https://ftp.pwg.org/pub/pwg/candidates/cs-ippraster10-20120420-5102.4.pdf[PWG 5102.4]
+| PWG Raster Format
+| Uncompressed page raster format for driverless printing. **Universal fallback.**
+
+| https://msweet.org/raster/[Apple Raster (URF)]
+| Unified Raster Format
+| Apple's proprietary raster for AirPrint. CUPS-compatible. Closely related to PWG Raster.
+
+| https://www.ecma-international.org/publications-and-standards/standards/ecma-388/[ECMA-388]
+| Open XML Paper Specification (OpenXPS)
+| Microsoft's XPS format. Some Windows-centric printers use it.
+
+| (Various)
+| ESC/P, ESC/P2
+| Epson Standard Code for Printers. Dot-matrix and some inkjets. Historical.
+
+| (Various)
+| GDI / Host-Based
+| Printer relies on host for rendering. No standard PDL. **Cannot be supported without vendor driver.**
+|===
+
+=== Document Format MIME Types
+
+[source]
+----
+application/pdf                    — PDF
+application/postscript             — PostScript
+application/vnd.hp-PCL             — PCL 5/6
+image/pwg-raster                   — PWG Raster
+image/urf                          — Apple Raster (URF)
+application/vnd.ms-xpsdocument     — XPS/OpenXPS
+application/octet-stream           — Raw bytes (printer infers)
+text/plain                         — Plain text (some printers can render)
+image/jpeg                         — JPEG (most printers accept directly)
+image/png                          — PNG (limited printer support)
+image/tiff                         — TIFF (some enterprise printers)
+----
+
+== 5. Driverless Printing Standards
+
+Modern "driverless" printing is the primary target for Print Doctor.
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://support.apple.com/en-gb/102093[Apple AirPrint]
+| AirPrint Specification
+| IPP 2.0 + Bonjour + PDF/URF/JPEG. **Most home printers since ~2012.**
+
+| https://mopria.org/spec-download[Mopria Print Service]
+| Mopria Alliance Standard
+| IPP 2.0 + DNS-SD + PDF/PWG Raster. Android's driverless printing. Similar to AirPrint.
+
+| https://ftp.pwg.org/pub/pwg/candidates/cs-ippeve10-20130128-5100.14.pdf[PWG 5100.14]
+| IPP Everywhere
+| The formal PWG standard for driverless IPP printing. AirPrint and Mopria are supersets.
+
+| https://msweet.org/ipp/everywhere/[IPP Everywhere Self-Certification]
+| PWG IPP Everywhere Tools
+| Self-certification tools for vendors. Useful for testing Presswerk against.
+|===
+
+== 6. USB Printing
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://www.usb.org/document-library/class-definitions-communication-devices-12[USB Device Class Definition for Printing Devices 1.1]
+| USB Printer Class
+| Defines USB interface class 7 (Printer). Subclass 1 = unidirectional, 2 = bidirectional.
+
+| https://www.usb.org/document-library/universal-serial-bus-specification-revision-20[USB 2.0 Specification]
+| USB 2.0
+| High Speed (480 Mbit/s). Most printers use this.
+
+| https://www.usb.org/document-library/usb-31-specification-release-1[USB 3.x Specification]
+| USB 3.0/3.1/3.2
+| SuperSpeed. Some newer printers and all USB-C connections.
+
+| https://www.usb.org/document-library/usb4-specification[USB4 Specification]
+| USB4 / Thunderbolt
+| Tunnels USB 3.x, DisplayPort, PCIe. Relevant for Thunderbolt-connected printers.
+
+| https://www.usb.org/document-library/ipp-over-usb[IPP-USB]
+| IPP over USB
+| Encapsulates IPP in USB Printer Class transfers. Modern printers use this.
+|===
+
+== 7. Bluetooth Printing
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://www.bluetooth.com/specifications/specs/basic-printing-profile-1-2/[BPP 1.2]
+| Basic Printing Profile
+| Bluetooth SIG profile for printing. Uses OBEX Object Push.
+
+| https://www.bluetooth.com/specifications/specs/hardcopy-cable-replacement-profile-1-0/[HCRP 1.0]
+| Hardcopy Cable Replacement Profile
+| Bluetooth replacement for USB/parallel cables. Carries raw PDL data.
+
+| https://www.bluetooth.com/specifications/specs/basic-imaging-profile-1-1/[BIP 1.1]
+| Basic Imaging Profile
+| Image push via Bluetooth. Some photo printers support this.
+
+| https://www.bluetooth.com/specifications/specs/serial-port-profile-1-1/[SPP 1.1]
+| Serial Port Profile
+| Virtual serial port over Bluetooth. Some receipt/label printers use this.
+
+| https://www.bluetooth.com/specifications/specs/core-specification-amended-5-4/[BLE GATT]
+| Bluetooth Low Energy Generic Attribute Profile
+| BLE-connected printers (e.g. Epson label printers) use custom GATT services.
+|===
+
+== 8. Wi-Fi Direct Printing
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://www.wi-fi.org/discover-wi-fi/wi-fi-direct[Wi-Fi Direct (P2P)]
+| Wi-Fi Peer-to-Peer
+| Direct device-to-device Wi-Fi without access point. WPA2 secured.
+
+| https://www.wi-fi.org/discover-wi-fi/wi-fi-aware[Wi-Fi Aware (NAN)]
+| Neighbour Awareness Networking
+| Low-power discovery before establishing Wi-Fi Direct connection.
+
+| (Subset of AirPrint)
+| AirPrint over Wi-Fi Direct
+| Apple devices can AirPrint over Wi-Fi Direct connections.
+|===
+
+== 9. NFC Printing
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://nfc-forum.org/our-work/specification-releases/[NFC Forum Connection Handover]
+| NFC Connection Handover 1.5
+| Tap-to-print: NFC tag contains Bluetooth or Wi-Fi Direct connection parameters. Phone taps printer → auto-connects via BT/Wi-Fi Direct → prints.
+
+| https://members.nfc-forum.org/apps/group_public/document.php?document_id=18688[NFC Forum NDEF]
+| NFC Data Exchange Format
+| NDEF records carry printer URI, connection params.
+
+| https://www.wi-fi.org/discover-wi-fi/wi-fi-simple-configuration[Wi-Fi Simple Configuration via NFC]
+| WSC 2.0 + NFC
+| NFC handover to Wi-Fi network credentials. Used by some printers for initial setup.
+|===
+
+== 10. Infrared (IrDA)
+
+Historical but included for completeness — some 1990s/early 2000s printers support IrDA.
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://en.wikipedia.org/wiki/Infrared_Data_Association[IrDA 1.0/1.1]
+| Infrared Data Association Physical Layer
+| 9600 bps to 4 Mbps. Line-of-sight, <1m range.
+
+| (IrDA standard)
+| IrLPT
+| Infrared equivalent of parallel port LPT printing.
+
+| (IrDA standard)
+| IrOBEX
+| Object Exchange over infrared. Used for file push to printers.
+|===
+
+== 11. Parallel Port / IEEE 1284
+
+Historical — required for supporting very old printers via adapters.
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| IEEE 1284-2000
+| Standard Signaling Method for a Bi-directional Parallel Peripheral Interface for Personal Computers
+| Centronics/parallel port. Modes: Compatibility (SPP), Nibble, Byte, EPP, ECP.
+
+| IEEE 1284.1-1997
+| Transport Protocol for IEEE 1284 Interfaces
+| Higher-level protocol on top of 1284 physical layer.
+
+| IEEE 1284.4-2000
+| Data Delivery and Logical Channels for IEEE 1284 Interfaces
+| Multiplexed channels over parallel port (MLC).
+|===
+
+== 12. Serial / RS-232
+
+Receipt printers and industrial label printers often use serial.
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://www.eia.org/[TIA/EIA-232-F]
+| Interface Between Data Terminal Equipment and Data Circuit-Terminating Equipment
+| RS-232 serial interface. Typically 9600-115200 baud for printers.
+
+| (Vendor-specific)
+| ESC/POS
+| Epson point-of-sale command set. De facto standard for receipt printers over serial.
+
+| (Vendor-specific)
+| ZPL / ZPL II
+| Zebra Programming Language for label printers over serial/USB/TCP.
+
+| (Vendor-specific)
+| TSPL / TSPL2
+| TSC printer language for barcode label printers.
+|===
+
+== 13. FireWire / IEEE 1394
+
+Rare for printers but some high-end photo printers from the 2000s used FireWire.
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| IEEE 1394-2008
+| High Performance Serial Bus (FireWire)
+| 400/800 Mbit/s. Some Canon and Epson photo printers had FireWire ports.
+
+| IEEE 1394.1-2004
+| Standard for High-Performance Serial Bus Bridges
+| FireWire bridge specification.
+
+| (Vendor-specific)
+| SBP-2 / SBP-3
+| Serial Bus Protocol. Used for FireWire printer class devices.
+|===
+
+== 14. SNMP Printer Management
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://datatracker.ietf.org/doc/html/rfc3805[RFC 3805]
+| Printer MIB v2
+| SNMP MIB for printer status, supplies levels, paper trays. **Critical for diagnostics.**
+
+| https://datatracker.ietf.org/doc/html/rfc2790[RFC 2790]
+| Host Resources MIB
+| General device info. `hrDeviceTable` includes printer entries.
+
+| https://datatracker.ietf.org/doc/html/rfc1759[RFC 1759]
+| Printer MIB v1
+| Original printer MIB. Superseded by RFC 3805 but still used by old printers.
+
+| https://datatracker.ietf.org/doc/html/rfc3410[RFC 3410]
+| Introduction and Applicability Statements for Internet Standard Management Framework
+| SNMP framework overview. SNMPv1 (community strings) for old printers, SNMPv3 for secure.
+|===
+
+=== Useful Printer MIB OIDs
+
+[source]
+----
+1.3.6.1.2.1.25.3.5.1.1     — hrPrinterStatus (idle=3, printing=4, warmup=5)
+1.3.6.1.2.1.25.3.5.1.2     — hrPrinterDetectedErrorState (bitmap)
+1.3.6.1.2.1.43.11.1.1.6    — prtMarkerSuppliesDescription (toner name)
+1.3.6.1.2.1.43.11.1.1.8    — prtMarkerSuppliesMaxCapacity
+1.3.6.1.2.1.43.11.1.1.9    — prtMarkerSuppliesLevel (current level)
+1.3.6.1.2.1.43.8.2.1.13    — prtInputMediaName (paper tray media)
+1.3.6.1.2.1.43.8.2.1.18    — prtInputCurrentLevel (paper remaining)
+1.3.6.1.2.1.43.5.1.1.1     — prtGeneralConfigChanges
+----
+
+== 15. Security
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://datatracker.ietf.org/doc/html/rfc8011[RFC 8011 §8]
+| IPP Security Considerations
+| TLS 1.2+ required for IPPS. Digest authentication. No plaintext credentials.
+
+| https://datatracker.ietf.org/doc/html/rfc8996[RFC 8996]
+| Deprecating TLS 1.0 and TLS 1.1
+| **Presswerk MUST NOT use TLS < 1.2.** TLS 1.3 preferred.
+
+| https://ftp.pwg.org/pub/pwg/informational/bp-ippauth10-20190816-5199.10.pdf[PWG 5199.10]
+| IPP Authentication Methods
+| Best practices for IPP authentication (OAuth 2.0, X.509 certificates).
+
+| https://support.google.com/a/answer/2906017[Google Cloud Print (deprecated)]
+| Google Cloud Print
+| Deprecated 2021. Some old printers only supported this. **Cannot be used.**
+|===
+
+== 16. Vendor-Specific Extensions
+
+[cols="1,3,2", options="header"]
+|===
+| Vendor | Technology | Notes
+
+| Apple
+| AirPrint (IPP + Bonjour + PDF/URF)
+| De facto standard for iOS/macOS printing. Presswerk emulates this.
+
+| Mopria Alliance
+| Mopria Print Service (IPP + DNS-SD)
+| De facto standard for Android printing. Presswerk emulates this.
+
+| HP
+| ePrint, Smart (cloud relay)
+| Proprietary cloud printing. Presswerk uses local IPP instead.
+
+| Brother
+| iPrint&Scan SDK
+| Vendor SDK for direct printing. Presswerk uses standard IPP.
+
+| Epson
+| Epson Connect / iPrint
+| Vendor cloud/local printing. ESC/P2 for legacy.
+
+| Canon
+| PIXMA/imageCLASS (proprietary protocol)
+| Some Canon printers use proprietary extensions alongside IPP.
+
+| Samsung / HP
+| Samsung Mobile Print (legacy)
+| Acquired by HP. Now uses Mopria.
+
+| Xerox
+| FreeFlow Print Server
+| Enterprise. Uses IPP + JDF (Job Definition Format).
+|===
+
+== 17. Job Ticket Formats
+
+[cols="1,3,2", options="header"]
+|===
+| Spec | Title | Notes
+
+| https://www.cip4.org/jdf[CIP4 JDF 1.7]
+| Job Definition Format
+| XML-based print job ticket. Enterprise workflows.
+
+| https://www.cip4.org/xjdf[CIP4 XJDF 2.1]
+| Exchange Job Definition Format
+| Simplified successor to JDF.
+
+| (PWG)
+| PWG Print Job Ticket
+| IPP attributes as the job ticket. This is what Presswerk uses.
+|===
+
+== 18. Image Formats for Direct Printing
+
+Some printers accept images directly without PDF wrapping.
+
+[cols="1,3,2", options="header"]
+|===
+| Format | MIME Type | Notes
+
+| JPEG
+| `image/jpeg`
+| Universally accepted. All AirPrint/Mopria/IPP Everywhere printers.
+
+| PNG
+| `image/png`
+| Limited direct printer support. Presswerk converts to PDF or raster.
+
+| TIFF
+| `image/tiff`
+| Enterprise scanners produce TIFF. Some printers accept directly.
+
+| GIF
+| `image/gif`
+| Very limited printer support. Convert to JPEG/PDF.
+
+| BMP
+| `image/bmp`
+| Some older HP printers. Convert to JPEG/PDF.
+
+| SVG
+| `image/svg+xml`
+| No direct printer support. Rasterize first.
+|===
+
+== Quick Reference: Presswerk Protocol Priority
+
+Presswerk always starts with the most secure/capable protocol and steps down:
+
+[source]
+----
+1. IPPS (IPP over TLS 1.3/1.2)       — RFC 8010/8011 + RFC 7472
+2. IPP/2.0 (plain)                     — RFC 8010/8011
+3. IPP/1.1 (plain)                     — RFC 8010/8011
+4. LPR/LPD                             — RFC 1179
+5. Raw TCP (JetDirect, port 9100)      — No formal spec
+6. USB (IPP-USB or Printer Class)      — USB Printer Class 1.1
+7. Bluetooth (BPP/HCRP/SPP)            — BT SIG profiles
+8. Wi-Fi Direct + IPP                  — Wi-Fi Alliance + IPP
+9. NFC handover → BT/Wi-Fi Direct      — NFC Forum Connection Handover
+10. Serial (RS-232/ESC-POS)            — TIA/EIA-232-F
+11. Parallel (IEEE 1284)               — IEEE 1284-2000
+12. USB memory stick (sneakernet)      — Filesystem-based
+----
+
+== Quick Reference: Presswerk Document Format Priority
+
+Presswerk sends documents in the best format the printer accepts:
+
+[source]
+----
+1. application/pdf                     — PDF (preferred, most capable)
+2. image/pwg-raster                    — PWG Raster (universal driverless)
+3. image/urf                           — Apple URF (AirPrint printers)
+4. application/postscript              — PostScript (laser printers)
+5. application/vnd.hp-PCL              — PCL 5/6 (HP and compatible)
+6. image/jpeg                          — JPEG (photo printers, simple docs)
+7. application/octet-stream            — Raw (printer infers format)
+----
+
+== Further Reading
+
+* https://www.pwg.org/[Printer Working Group (PWG)] — Standards body for IPP and related specs
+* https://www.cups.org/[CUPS (OpenPrinting)] — Open-source printing system; excellent reference implementation
+* https://openprinting.github.io/[OpenPrinting] — Linux printing standards and drivers
+* https://mopria.org/[Mopria Alliance] — Android driverless printing
+* https://support.apple.com/en-gb/102093[Apple AirPrint] — AirPrint compatibility info
+* https://www.bluetooth.com/specifications/[Bluetooth SIG Specifications] — All Bluetooth profiles
+* https://nfc-forum.org/[NFC Forum] — NFC specifications
+* https://www.usb.org/documents[USB Implementers Forum] — USB specifications

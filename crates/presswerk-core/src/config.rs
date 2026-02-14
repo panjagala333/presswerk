@@ -22,6 +22,12 @@ pub struct AppConfig {
     pub audit_enabled: bool,
     /// Enable encrypted local storage.
     pub encryption_enabled: bool,
+    /// Timeout for print operations (seconds).
+    pub print_timeout_secs: u64,
+    /// Timeout for query operations like Get-Printer-Attributes (seconds).
+    pub query_timeout_secs: u64,
+    /// Whether Easy Mode is the default interface.
+    pub easy_mode: bool,
 }
 
 impl Default for AppConfig {
@@ -34,6 +40,9 @@ impl Default for AppConfig {
             auto_accept_network_jobs: false,
             audit_enabled: true,
             encryption_enabled: true,
+            print_timeout_secs: 60,
+            query_timeout_secs: 15,
+            easy_mode: true,
         }
     }
 }

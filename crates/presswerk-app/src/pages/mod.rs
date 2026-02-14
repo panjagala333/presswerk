@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: PMPL-1.0-or-later
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <jonathan.jewell@open.ac.uk>
 
+pub mod add_printer;
 pub mod audit;
+pub mod doctor;
+pub mod easy_jobs;
+pub mod easy_print;
 pub mod edit;
 pub mod home;
 pub mod jobs;

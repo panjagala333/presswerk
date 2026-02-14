@@ -11,12 +11,13 @@
 
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::time::Duration;
 
 use ipp::prelude::*;
 use tracing::{debug, error, info, instrument};
 
 use presswerk_core::error::{PresswerkError, Result};
-use presswerk_core::types::DocumentType;
+use presswerk_core::types::{DocumentType, PrintSettings};
 
 /// Attributes returned by a Get-Printer-Attributes response.
 ///
@@ -34,6 +35,12 @@ pub struct RemoteJobInfo {
     /// IPP job-state keyword (e.g. "processing", "completed").
     pub job_state: String,
 }
+
+/// Timeout for print operations (seconds).
+const PRINT_TIMEOUT_SECS: u64 = 60;
+
+/// Timeout for query operations like Get-Printer-Attributes, Get-Jobs (seconds).
+const QUERY_TIMEOUT_SECS: u64 = 15;
 
 /// Async IPP client wrapping the `ipp` crate.
 ///
@@ -71,10 +78,18 @@ impl IppClient {
         let client = AsyncIppClient::new(self.uri.clone());
 
         debug!("sending Get-Printer-Attributes");
-        let response = client
-            .send(operation)
-            .await
-            .map_err(|e| PresswerkError::IppRequest(format!("Get-Printer-Attributes: {e}")))?;
+        let response = tokio::time::timeout(
+            Duration::from_secs(QUERY_TIMEOUT_SECS),
+            client.send(operation),
+        )
+        .await
+        .map_err(|_| {
+            PresswerkError::IppRequest(format!(
+                "Get-Printer-Attributes timed out after {}s",
+                QUERY_TIMEOUT_SECS
+            ))
+        })?
+        .map_err(|e| PresswerkError::IppRequest(format!("Get-Printer-Attributes: {e}")))?;
 
         if !response.header().status_code().is_success() {
             let code = response.header().status_code();
@@ -98,27 +113,79 @@ impl IppClient {
     /// * `document_bytes` — raw bytes of the document to print.
     /// * `document_type`  — the document MIME type (used for `document-format`).
     /// * `job_name`       — human-readable name shown in the printer queue.
-    #[instrument(skip(self, document_bytes), fields(uri = %self.uri, job_name = %job_name))]
+    /// * `settings`       — user print settings (copies, paper, duplex, colour, etc.)
+    #[instrument(skip(self, document_bytes, settings), fields(uri = %self.uri, job_name = %job_name))]
     pub async fn print_job(
         &self,
         document_bytes: Vec<u8>,
         document_type: DocumentType,
         job_name: &str,
+        settings: &PrintSettings,
     ) -> Result<i32> {
         let payload = IppPayload::new(Cursor::new(document_bytes));
 
-        let operation = IppOperationBuilder::print_job(self.uri.clone(), payload)
+        let mut builder = IppOperationBuilder::print_job(self.uri.clone(), payload)
             .job_title(job_name)
-            .document_format(document_type.mime_type())
-            .build();
+            .document_format(document_type.mime_type());
 
+        // Inject print settings as IPP job-template attributes.
+        builder = builder.attribute(IppAttribute::new(
+            "copies",
+            IppValue::Integer(settings.copies as i32),
+        ));
+        builder = builder.attribute(IppAttribute::new(
+            "media",
+            IppValue::Keyword(settings.paper_size.ipp_media_keyword().into()),
+        ));
+        builder = builder.attribute(IppAttribute::new(
+            "sides",
+            IppValue::Keyword(settings.duplex.ipp_sides_keyword().into()),
+        ));
+        builder = builder.attribute(IppAttribute::new(
+            "orientation-requested",
+            IppValue::Enum(settings.orientation.ipp_enum_value()),
+        ));
+        builder = builder.attribute(IppAttribute::new(
+            "print-color-mode",
+            IppValue::Keyword(
+                if settings.color { "color" } else { "monochrome" }.into(),
+            ),
+        ));
+
+        // Page ranges (1-indexed, inclusive)
+        if let Some(ref range) = settings.page_range {
+            builder = builder.attribute(IppAttribute::new(
+                "page-ranges",
+                IppValue::RangeOfInteger {
+                    min: range.start as i32,
+                    max: range.end as i32,
+                },
+            ));
+        }
+
+        let operation = builder.build();
         let client = AsyncIppClient::new(self.uri.clone());
 
-        info!(mime = document_type.mime_type(), "sending Print-Job");
-        let response = client
-            .send(operation)
-            .await
-            .map_err(|e| PresswerkError::IppRequest(format!("Print-Job: {e}")))?;
+        info!(
+            mime = document_type.mime_type(),
+            copies = settings.copies,
+            duplex = settings.duplex.ipp_sides_keyword(),
+            color = settings.color,
+            "sending Print-Job with settings"
+        );
+
+        let response = tokio::time::timeout(
+            Duration::from_secs(PRINT_TIMEOUT_SECS),
+            client.send(operation),
+        )
+        .await
+        .map_err(|_| {
+            PresswerkError::IppRequest(format!(
+                "Print-Job timed out after {}s — printer may be busy or offline",
+                PRINT_TIMEOUT_SECS
+            ))
+        })?
+        .map_err(|e| PresswerkError::IppRequest(format!("Print-Job: {e}")))?;
 
         if !response.header().status_code().is_success() {
             let code = response.header().status_code();
@@ -144,10 +211,18 @@ impl IppClient {
         let client = AsyncIppClient::new(self.uri.clone());
 
         debug!("sending Get-Jobs");
-        let response = client
-            .send(operation)
-            .await
-            .map_err(|e| PresswerkError::IppRequest(format!("Get-Jobs: {e}")))?;
+        let response = tokio::time::timeout(
+            Duration::from_secs(QUERY_TIMEOUT_SECS),
+            client.send(operation),
+        )
+        .await
+        .map_err(|_| {
+            PresswerkError::IppRequest(format!(
+                "Get-Jobs timed out after {}s",
+                QUERY_TIMEOUT_SECS
+            ))
+        })?
+        .map_err(|e| PresswerkError::IppRequest(format!("Get-Jobs: {e}")))?;
 
         if !response.header().status_code().is_success() {
             let code = response.header().status_code();
@@ -171,10 +246,18 @@ impl IppClient {
         let client = AsyncIppClient::new(self.uri.clone());
 
         info!(job_id, "sending Cancel-Job");
-        let response = client
-            .send(operation)
-            .await
-            .map_err(|e| PresswerkError::IppRequest(format!("Cancel-Job({}): {e}", job_id)))?;
+        let response = tokio::time::timeout(
+            Duration::from_secs(QUERY_TIMEOUT_SECS),
+            client.send(operation),
+        )
+        .await
+        .map_err(|_| {
+            PresswerkError::IppRequest(format!(
+                "Cancel-Job({job_id}) timed out after {}s",
+                QUERY_TIMEOUT_SECS
+            ))
+        })?
+        .map_err(|e| PresswerkError::IppRequest(format!("Cancel-Job({}): {e}", job_id)))?;
 
         if !response.header().status_code().is_success() {
             let code = response.header().status_code();

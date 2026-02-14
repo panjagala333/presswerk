@@ -1417,6 +1417,7 @@ fn job_status_to_ipp_state(status: JobStatus) -> i32 {
         JobStatus::Completed => JOB_STATE_COMPLETED,
         JobStatus::Cancelled => JOB_STATE_CANCELED,
         JobStatus::Failed => JOB_STATE_ABORTED,
+        JobStatus::RetryPending => JOB_STATE_PENDING,
     }
 }
 
@@ -1429,6 +1430,7 @@ fn job_state_reason(status: JobStatus) -> &'static str {
         JobStatus::Completed => "job-completed-successfully",
         JobStatus::Cancelled => "job-canceled-by-user",
         JobStatus::Failed => "aborted-by-system",
+        JobStatus::RetryPending => "job-queued-for-marker",
     }
 }
 

@@ -843,11 +843,172 @@ impl NativeShare for IosBridge {
 
         Ok(())
     }
+
+    /// Share text content via the iOS share sheet.
+    fn share_text(&self, text: &str) -> Result<()> {
+        let _mtm = require_main_thread()?;
+
+        tracing::info!("iOS: sharing text via UIActivityViewController");
+
+        let ns_text = NSString::from_str(text);
+        let text_as_obj: Retained<AnyObject> = Retained::into_super(Retained::into_super(ns_text));
+        let items = NSArray::from_retained_slice(&[text_as_obj]);
+
+        // SAFETY: Same pattern as share_file — UIActivityViewController alloc+init.
+        let activity_vc: Retained<UIActivityViewController> = unsafe {
+            let alloc: Retained<UIActivityViewController> =
+                msg_send![objc2::class!(UIActivityViewController), alloc];
+            msg_send![
+                alloc,
+                initWithActivityItems: &*items,
+                applicationActivities: std::ptr::null::<AnyObject>()
+            ]
+        };
+
+        let root_vc = root_view_controller()?;
+        // SAFETY: presentViewController — main thread confirmed above.
+        unsafe {
+            root_vc.presentViewController_animated_completion(&activity_vc, true, None);
+        }
+
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+
+// ---------------------------------------------------------------------------
+// Stub implementations for connection types not yet wired to iOS APIs
+// ---------------------------------------------------------------------------
+
+impl NativeUsbPrint for IosBridge {
+    fn detect_usb_printers(&self) -> Result<Vec<UsbPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_usb(&self, _device_id: &str, _document: &[u8], _mime_type: &str) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeBluetoothPrint for IosBridge {
+    fn scan_bluetooth_printers(&self) -> Result<Vec<BluetoothPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_bluetooth(&self, _device_id: &str, _document: &[u8]) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeNfcPrint for IosBridge {
+    fn read_nfc_printer_tag(&self) -> Result<Option<NfcPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeConnectivity for IosBridge {
+    fn wifi_ssid(&self) -> Result<Option<String>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn supports_wifi_direct(&self) -> bool {
+        false
+    }
+
+    fn discover_wifi_direct_printers(&self) -> Result<Vec<WifiDirectPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeFireWirePrint for IosBridge {
+    fn detect_firewire_printers(&self) -> Result<Vec<FireWirePrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_firewire(&self, _device_id: &str, _document: &[u8], _mime_type: &str) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeLightningPrint for IosBridge {
+    fn detect_lightning_printers(&self) -> Result<Vec<LightningPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_lightning(&self, _device_id: &str, _document: &[u8], _mime_type: &str) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeThunderboltPrint for IosBridge {
+    fn detect_thunderbolt_printers(&self) -> Result<Vec<ThunderboltPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_thunderbolt(&self, _device_id: &str, _document: &[u8], _mime_type: &str) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeSerialPrint for IosBridge {
+    fn detect_serial_printers(&self) -> Result<Vec<SerialPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_serial(&self, _port: &str, _baud_rate: u32, _document: &[u8]) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeParallelPrint for IosBridge {
+    fn detect_parallel_printers(&self) -> Result<Vec<ParallelPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_parallel(&self, _port: &str, _document: &[u8]) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeInfraredPrint for IosBridge {
+    fn scan_infrared_printers(&self) -> Result<Vec<InfraredPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_infrared(&self, _device_id: &str, _document: &[u8]) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeIBeaconDiscover for IosBridge {
+    fn scan_ibeacon_printers(&self) -> Result<Vec<IBeaconPrinterInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeLiFiPrint for IosBridge {
+    fn detect_lifi_endpoints(&self) -> Result<Vec<LiFiEndpointInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn print_lifi(&self, _endpoint_id: &str, _document: &[u8]) -> Result<()> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
+
+impl NativeUsbDrivePrint for IosBridge {
+    fn detect_usb_drives(&self) -> Result<Vec<UsbDriveInfo>> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+
+    fn copy_to_usb_drive(&self, _drive_id: &str, _document: &[u8], _filename: &str) -> Result<String> {
+        Err(PresswerkError::PlatformUnavailable)
+    }
+}
 
 #[cfg(test)]
 mod tests {

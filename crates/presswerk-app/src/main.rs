@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: PMPL-1.0-or-later
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <jonathan.jewell@open.ac.uk>
 //
-// Presswerk — High-Assurance Local Print Router/Server
+// Print Doctor (Presswerk engine) — High-Assurance Local Print Router/Server
 //
 // Entry point. Initialises logging, backend services, app state, and launches
-// the Dioxus UI.
+// the Dioxus UI. Supports two modes:
+//   - Easy Mode (default): simplified 3-tap printing for non-technical users
+//   - Advanced Mode: full Presswerk interface with all features
 
 mod pages;
 mod services;
@@ -12,7 +14,11 @@ mod state;
 
 use dioxus::prelude::*;
 
+use pages::add_printer::AddPrinter;
 use pages::audit::Audit;
+use pages::doctor::Doctor;
+use pages::easy_jobs::EasyJobs;
+use pages::easy_print::EasyPrint;
 use pages::edit::Edit;
 use pages::home::Home;
 use pages::jobs::Jobs;
@@ -32,33 +38,48 @@ fn main() {
         )
         .init();
 
-    tracing::info!("Presswerk starting");
+    tracing::info!("Print Doctor (Presswerk) starting");
 
     dioxus::launch(app);
 }
 
 /// Top-level route enum.
+///
+/// Easy Mode routes are the default experience. Advanced routes provide
+/// the full Presswerk interface accessible via Settings → Advanced Mode.
 #[derive(Debug, Clone, Routable, PartialEq)]
 enum Route {
-    #[layout(TabLayout)]
+    // Easy Mode (default)
+    #[layout(EasyLayout)]
     #[route("/")]
+    EasyPrint {},
+    #[route("/my-jobs")]
+    EasyJobs {},
+    #[route("/help")]
+    Doctor {},
+
+    // Advanced Mode
+    #[layout(TabLayout)]
+    #[route("/advanced")]
     Home {},
-    #[route("/print")]
+    #[route("/advanced/print")]
     Print {},
-    #[route("/scan")]
+    #[route("/advanced/scan")]
     Scan {},
-    #[route("/edit")]
+    #[route("/advanced/edit")]
     Edit {},
-    #[route("/text")]
+    #[route("/advanced/text")]
     TextEditor {},
-    #[route("/server")]
+    #[route("/advanced/server")]
     Server {},
-    #[route("/jobs")]
+    #[route("/advanced/jobs")]
     Jobs {},
-    #[route("/audit")]
+    #[route("/advanced/audit")]
     Audit {},
-    #[route("/settings")]
+    #[route("/advanced/settings")]
     Settings {},
+    #[route("/advanced/add-printer")]
+    AddPrinter {},
 }
 
 /// Root component.
@@ -92,7 +113,45 @@ fn app() -> Element {
     }
 }
 
-/// Persistent bottom tab layout wrapping all pages.
+/// Easy Mode layout — simplified 3-tab bottom bar.
+///
+/// This is the default experience. Giant touch targets, minimal options.
+/// "Print Doctor — it just works."
+#[component]
+fn EasyLayout() -> Element {
+    rsx! {
+        div { class: "app-container",
+            style: "display: flex; flex-direction: column; height: 100vh; font-family: system-ui, -apple-system, sans-serif;",
+
+            // Page content
+            div { class: "page-content",
+                style: "flex: 1; overflow-y: auto; padding: 16px;",
+                Outlet::<Route> {}
+            }
+
+            // Bottom tab bar — 3 tabs only
+            nav { class: "tab-bar",
+                style: "display: flex; justify-content: space-around; padding: 12px 0; border-top: 1px solid #e0e0e0; background: #fafafa;",
+                EasyTabButton { to: Route::EasyPrint {}, label: "Print", icon: "\u{1F5A8}" }
+                EasyTabButton { to: Route::EasyJobs {}, label: "My Jobs", icon: "\u{1F4CB}" }
+                EasyTabButton { to: Route::Doctor {}, label: "Help", icon: "\u{2695}" }
+            }
+        }
+    }
+}
+
+#[component]
+fn EasyTabButton(to: Route, label: &'static str, icon: &'static str) -> Element {
+    rsx! {
+        Link { to: to,
+            style: "display: flex; flex-direction: column; align-items: center; text-decoration: none; color: #333; font-size: 14px; padding: 4px 16px;",
+            span { style: "font-size: 28px; margin-bottom: 4px;", "{icon}" }
+            span { style: "font-weight: 500;", "{label}" }
+        }
+    }
+}
+
+/// Advanced Mode — full Presswerk interface with all features.
 #[component]
 fn TabLayout() -> Element {
     rsx! {
