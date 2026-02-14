@@ -3,8 +3,8 @@
 //
 // Global application state — reactive signals for the Dioxus UI.
 
-use presswerk_core::types::{DiscoveredPrinter, PrintJob, ServerStatus};
 use presswerk_core::AppConfig;
+use presswerk_core::types::{DiscoveredPrinter, PrintJob, ServerStatus};
 
 use crate::services::app_services::AppServices;
 

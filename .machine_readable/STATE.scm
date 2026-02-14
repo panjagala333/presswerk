@@ -1,25 +1,40 @@
 ;; SPDX-License-Identifier: PMPL-1.0-or-later
-(state (metadata (version "0.1.0") (last-updated "2026-02-13") (status active))
+(state (metadata (version "0.2.0") (last-updated "2026-02-14") (status active))
   (project-context
     (name "presswerk")
     (purpose "High-assurance local print router and server for iOS/Android")
-    (completion-percentage 15))
+    (completion-percentage 65))
   (components
-    (component "presswerk-core" (status "complete") (description "Shared types, errors, config"))
-    (component "presswerk-security" (status "implemented") (description "Encrypted storage, audit trail, TLS"))
-    (component "presswerk-document" (status "implemented") (description "PDF ops, image processing, scanning"))
-    (component "presswerk-print" (status "implemented") (description "IPP client/server, mDNS discovery, job queue"))
-    (component "presswerk-bridge" (status "scaffolded") (description "iOS/Android native bridges — stubs"))
-    (component "presswerk-app" (status "scaffolded") (description "Dioxus UI with all pages")))
+    (component "presswerk-core" (status "complete") (description "Shared types, errors, config — 244-line types, 70-line errors"))
+    (component "presswerk-security" (status "complete") (description "age encryption, SHA-256 integrity, Ed25519 certs, SQLite audit trail — 14 tests"))
+    (component "presswerk-document" (status "complete") (description "PDF read/merge/split/rotate, image processing, scan enhancement, OCR — 7 tests"))
+    (component "presswerk-print" (status "complete") (description "Full IPP/1.1 server (1936 lines), IPP client, mDNS discovery, SQLite job queue — 40 tests"))
+    (component "presswerk-bridge" (status "unverified") (description "iOS objc2 (894 lines) + Android JNI (973 lines) — detailed but untested on device"))
+    (component "presswerk-app" (status "functional") (description "Dioxus UI with 10 pages, routing, AppServices layer, settings"))
+    (component "abi-proofs" (status "complete") (description "5 Idris2 files: Types, Protocol, Encryption, Layout, Bridge — no Admitted"))
+    (component "ffi-zig" (status "complete") (description "C-compatible FFI with 5 tests — lifecycle, transitions, hash, version")))
+  (metrics
+    (rust-files 43)
+    (rust-lines 10219)
+    (idris2-files 5)
+    (zig-files 3)
+    (unit-tests 61)
+    (clippy-warnings 0)
+    (panic-attack-critical 0)
+    (panic-attack-high 4)
+    (panic-attack-medium 5))
   (current-position
-    (phase "Phase 1 — Scaffolding + Core")
-    (milestone "All crates created with real implementations, UI pages scaffolded")
+    (phase "Phase 7 — Production Hardening")
+    (milestone "Core implementation complete, formal verification done, doc storage implemented")
     (next-actions
-      ("Wire discovery into Home page"
-       "Wire IPP client into Print page"
-       "Implement iOS bridge methods"
-       "Test on iOS simulator")))
+      ("Test iOS bridge on device/simulator (requires macOS + Xcode)"
+       "Test Android bridge on device/emulator (requires NDK)"
+       "Add TLS to IPP server (rustls cert already generated)"
+       "Add rate limiting to IPP server"
+       "Apple Developer Team ID for iOS signing")))
   (blockers-and-issues
-    (blocker "iOS/Android bridges are stubs — need Xcode/NDK to test")
-    (blocker "ippper crate availability not confirmed for print server")
-    (note "Desktop dev mode works without mobile bridges via stub bridge")))
+    (blocker "iOS bridge never compiled on target — need macOS + Xcode")
+    (blocker "Android bridge never compiled on target — need NDK")
+    (blocker "Dioxus.toml team_id empty — need Apple Developer account")
+    (note "Desktop dev mode works via stub bridge")
+    (note "All 4 panic-attack High findings are unavoidable FFI unsafe — covered by Bridge.idr proofs")))

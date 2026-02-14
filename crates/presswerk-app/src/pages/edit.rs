@@ -221,7 +221,12 @@ pub fn Edit() -> Element {
 }
 
 #[component]
-fn ToolButton(label: &'static str, icon: &'static str, disabled: bool, onclick: EventHandler<MouseEvent>) -> Element {
+fn ToolButton(
+    label: &'static str,
+    icon: &'static str,
+    disabled: bool,
+    onclick: EventHandler<MouseEvent>,
+) -> Element {
     let opacity = if disabled { "0.5" } else { "1" };
     rsx! {
         button {

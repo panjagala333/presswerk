@@ -16,7 +16,7 @@
 
 use presswerk_core::error::PresswerkError;
 use ring::rand::SystemRandom;
-use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_ASN1_SIGNING};
+use ring::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair};
 use tracing::{debug, instrument};
 
 /// An ECDSA P-256 key pair suitable for TLS server authentication.
@@ -40,21 +40,14 @@ impl SelfSignedCert {
     pub fn generate() -> Result<Self, PresswerkError> {
         let rng = SystemRandom::new();
 
-        let pkcs8_document = EcdsaKeyPair::generate_pkcs8(
-            &ECDSA_P256_SHA256_ASN1_SIGNING,
-            &rng,
-        )
-        .map_err(|e| PresswerkError::Certificate(format!("key generation failed: {e}")))?;
+        let pkcs8_document = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng)
+            .map_err(|e| PresswerkError::Certificate(format!("key generation failed: {e}")))?;
 
         let pkcs8_der = pkcs8_document.as_ref().to_vec();
 
         // Re-parse so we can extract the public key.
-        let key_pair = EcdsaKeyPair::from_pkcs8(
-            &ECDSA_P256_SHA256_ASN1_SIGNING,
-            &pkcs8_der,
-            &rng,
-        )
-        .map_err(|e| PresswerkError::Certificate(format!("key parsing failed: {e}")))?;
+        let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &pkcs8_der, &rng)
+            .map_err(|e| PresswerkError::Certificate(format!("key parsing failed: {e}")))?;
 
         let public_key_der = key_pair.public_key().as_ref().to_vec();
 
@@ -91,12 +84,9 @@ impl SelfSignedCert {
     pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>, PresswerkError> {
         let rng = SystemRandom::new();
 
-        let key_pair = EcdsaKeyPair::from_pkcs8(
-            &ECDSA_P256_SHA256_ASN1_SIGNING,
-            &self.pkcs8_der,
-            &rng,
-        )
-        .map_err(|e| PresswerkError::Certificate(format!("key load failed: {e}")))?;
+        let key_pair =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &self.pkcs8_der, &rng)
+                .map_err(|e| PresswerkError::Certificate(format!("key load failed: {e}")))?;
 
         let sig = key_pair
             .sign(&rng, message)
@@ -109,7 +99,7 @@ impl SelfSignedCert {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ring::signature::{UnparsedPublicKey, ECDSA_P256_SHA256_ASN1};
+    use ring::signature::{ECDSA_P256_SHA256_ASN1, UnparsedPublicKey};
 
     #[test]
     fn generate_key_pair() {
@@ -134,8 +124,7 @@ mod tests {
         let signature = cert.sign(message).expect("signing failed");
 
         // Verify with ring's public-key-only verifier.
-        let public_key =
-            UnparsedPublicKey::new(&ECDSA_P256_SHA256_ASN1, cert.public_key_der());
+        let public_key = UnparsedPublicKey::new(&ECDSA_P256_SHA256_ASN1, cert.public_key_der());
 
         public_key
             .verify(message, &signature)

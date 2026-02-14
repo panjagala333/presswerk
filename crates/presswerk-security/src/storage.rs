@@ -92,7 +92,11 @@ mod tests {
         let plaintext = b"Presswerk print job #42";
 
         let ciphertext = storage.encrypt(plaintext).expect("encrypt failed");
-        assert_ne!(&ciphertext[..], plaintext, "ciphertext must differ from plaintext");
+        assert_ne!(
+            &ciphertext[..],
+            plaintext,
+            "ciphertext must differ from plaintext"
+        );
 
         let decrypted = storage.decrypt(&ciphertext).expect("decrypt failed");
         assert_eq!(decrypted, plaintext);
@@ -106,7 +110,10 @@ mod tests {
         let ciphertext = storage_a.encrypt(b"secret").expect("encrypt failed");
         let result = storage_b.decrypt(&ciphertext);
 
-        assert!(result.is_err(), "decryption with wrong passphrase must fail");
+        assert!(
+            result.is_err(),
+            "decryption with wrong passphrase must fail"
+        );
     }
 
     #[test]

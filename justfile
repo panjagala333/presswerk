@@ -24,6 +24,10 @@ build:
 test:
     cargo test --workspace
 
+# Run library tests only (avoids desktop linker deps)
+test-libs:
+    cargo test -p presswerk-core -p presswerk-security -p presswerk-document -p presswerk-print
+
 # Clippy lint
 lint:
     cargo clippy --workspace -- -D warnings
@@ -40,9 +44,12 @@ fmt:
 assail:
     panic-attack assail .
 
-# Type-check Idris2 ABI proofs
+# Type-check all Idris2 ABI proofs
 verify-abi:
-    cd src/abi && idris2 --check Types.idr && idris2 --check Protocol.idr && idris2 --check Encryption.idr
+    cd src/abi && idris2 --check Types.idr && idris2 --check Protocol.idr && idris2 --check Encryption.idr && idris2 --check Layout.idr && idris2 --check Bridge.idr
+
+# Full CI check (test + lint + fmt)
+ci: test-libs lint fmt-check
 
 # Clean build artifacts
 clean:

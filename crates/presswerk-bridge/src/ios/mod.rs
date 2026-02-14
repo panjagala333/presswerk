@@ -36,14 +36,13 @@ use std::sync::mpsc;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool, NSObject, ProtocolObject};
-use objc2::{define_class, msg_send, AllocAnyThread, MainThreadMarker};
+use objc2::{AllocAnyThread, MainThreadMarker, define_class, msg_send};
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSString, NSURL};
 use objc2_ui_kit::{
     UIActivityViewController, UIApplication, UIDocumentPickerDelegate,
-    UIDocumentPickerViewController, UIImagePickerController,
-    UIImagePickerControllerDelegate, UIImagePickerControllerSourceType,
-    UINavigationControllerDelegate, UIPrintInteractionController,
-    UIViewController,
+    UIDocumentPickerViewController, UIImagePickerController, UIImagePickerControllerDelegate,
+    UIImagePickerControllerSourceType, UINavigationControllerDelegate,
+    UIPrintInteractionController, UIViewController,
 };
 
 use presswerk_core::error::{PresswerkError, Result};
@@ -121,9 +120,8 @@ extern "C" {
 /// On iOS 15+ the caller should ideally walk `connectedScenes`, but for an
 /// MVP bridge this is sufficient.
 fn root_view_controller() -> Result<Retained<UIViewController>> {
-    let mtm = MainThreadMarker::new().ok_or_else(|| {
-        PresswerkError::Bridge("must be called from the main thread".into())
-    })?;
+    let mtm = MainThreadMarker::new()
+        .ok_or_else(|| PresswerkError::Bridge("must be called from the main thread".into()))?;
 
     let app = UIApplication::sharedApplication(mtm);
 
@@ -135,16 +133,13 @@ fn root_view_controller() -> Result<Retained<UIViewController>> {
         window.and_then(|w| msg_send![&w, rootViewController])
     };
 
-    root.ok_or_else(|| {
-        PresswerkError::Bridge("no root view controller available".into())
-    })
+    root.ok_or_else(|| PresswerkError::Bridge("no root view controller available".into()))
 }
 
 /// Assert that we are on the main thread and return the marker.
 fn require_main_thread() -> Result<MainThreadMarker> {
-    MainThreadMarker::new().ok_or_else(|| {
-        PresswerkError::Bridge("must be called from the main thread".into())
-    })
+    MainThreadMarker::new()
+        .ok_or_else(|| PresswerkError::Bridge("must be called from the main thread".into()))
 }
 
 /// Cast `NSDictionary` to a `*const c_void` for Security.framework calls.
@@ -269,10 +264,7 @@ define_class! {
 
 impl CameraDelegate {
     /// Create a new camera delegate wired to `tx`.
-    fn new(
-        mtm: MainThreadMarker,
-        tx: mpsc::Sender<Option<Vec<u8>>>,
-    ) -> Retained<Self> {
+    fn new(mtm: MainThreadMarker, tx: mpsc::Sender<Option<Vec<u8>>>) -> Retained<Self> {
         let this = mtm.alloc::<Self>();
         let this = this.set_ivars(CameraDelegateIvars {
             sender: RefCell::new(Some(tx)),
@@ -333,10 +325,7 @@ define_class! {
 }
 
 impl DocPickerDelegate {
-    fn new(
-        mtm: MainThreadMarker,
-        tx: mpsc::Sender<Option<String>>,
-    ) -> Retained<Self> {
+    fn new(mtm: MainThreadMarker, tx: mpsc::Sender<Option<String>>) -> Retained<Self> {
         let this = mtm.alloc::<Self>();
         let this = this.set_ivars(DocPickerDelegateIvars {
             sender: RefCell::new(Some(tx)),
@@ -405,9 +394,7 @@ impl NativePrint for IosBridge {
 
         // SAFETY: presentAnimated_completionHandler is a documented UIKit method.
         // Main-thread requirement satisfied by require_main_thread() above.
-        let presented = unsafe {
-            controller.presentAnimated_completionHandler(true, None)
-        };
+        let presented = unsafe { controller.presentAnimated_completionHandler(true, None) };
 
         if presented {
             Ok(())
@@ -487,9 +474,9 @@ impl NativeCamera for IosBridge {
         // Block until the delegate fires.  The main run loop continues to
         // pump while the picker is presented, so the delegate callbacks
         // will execute on the main thread as expected.
-        let result = rx.recv().map_err(|e| {
-            PresswerkError::Bridge(format!("camera delegate channel error: {e}"))
-        })?;
+        let result = rx
+            .recv()
+            .map_err(|e| PresswerkError::Bridge(format!("camera delegate channel error: {e}")))?;
 
         Ok(result)
     }
@@ -544,9 +531,8 @@ impl NativeFilePicker for IosBridge {
         let content_types: Retained<NSArray<AnyObject>> = if ut_types.is_empty() {
             // SAFETY: msg_send to UTType class property. Returns the well-known
             // public.data UTType — always non-nil.
-            let public_data: Retained<AnyObject> = unsafe {
-                msg_send![objc2::class!(UTType), dataType]
-            };
+            let public_data: Retained<AnyObject> =
+                unsafe { msg_send![objc2::class!(UTType), dataType] };
             NSArray::from_retained_slice(&[public_data])
         } else {
             NSArray::from_retained_slice(&ut_types)
@@ -584,9 +570,9 @@ impl NativeFilePicker for IosBridge {
             root_vc.presentViewController_animated_completion(&picker, true, None);
         }
 
-        let result = rx.recv().map_err(|e| {
-            PresswerkError::Bridge(format!("document picker channel error: {e}"))
-        })?;
+        let result = rx
+            .recv()
+            .map_err(|e| PresswerkError::Bridge(format!("document picker channel error: {e}")))?;
 
         Ok(result)
     }
@@ -601,9 +587,8 @@ impl NativeFilePicker for IosBridge {
     /// security-scoped access session before calling this method.
     fn read_picked_file(&self, path: &str) -> Result<Vec<u8>> {
         tracing::debug!(path, "iOS: reading picked file");
-        std::fs::read(path).map_err(|e| {
-            PresswerkError::Bridge(format!("failed to read picked file: {e}"))
-        })
+        std::fs::read(path)
+            .map_err(|e| PresswerkError::Bridge(format!("failed to read picked file: {e}")))
     }
 }
 
@@ -627,9 +612,8 @@ impl NativeKeychain for IosBridge {
 
         // SAFETY: Accessing extern statics from Security.framework. These are
         // constant CFStringRef values linked by the iOS SDK, valid for process lifetime.
-        let keys: Vec<&NSString> = unsafe {
-            vec![kSecClass, kSecAttrAccount, kSecAttrService, kSecValueData]
-        };
+        let keys: Vec<&NSString> =
+            unsafe { vec![kSecClass, kSecAttrAccount, kSecAttrService, kSecValueData] };
         // SAFETY: nsstr_as_obj/nsdata_as_obj are toll-free bridge casts.
         // Proven safe by Bridge.idr TollFreePair.
         let values: Vec<&AnyObject> = unsafe {
@@ -674,9 +658,8 @@ impl NativeKeychain for IosBridge {
         // kSecReturnData expects a CFBoolean.  kCFBooleanTrue is toll-free
         // bridged with `[NSNumber numberWithBool:YES]`.
         // SAFETY: msg_send to NSNumber class method. Returns a valid retained object.
-        let cf_true: Retained<AnyObject> = unsafe {
-            msg_send![objc2::class!(NSNumber), numberWithBool: Bool::YES]
-        };
+        let cf_true: Retained<AnyObject> =
+            unsafe { msg_send![objc2::class!(NSNumber), numberWithBool: Bool::YES] };
 
         // SAFETY: Accessing Security.framework extern statics (process-lifetime constants).
         let keys: Vec<&NSString> = unsafe {
@@ -705,8 +688,7 @@ impl NativeKeychain for IosBridge {
         // SAFETY: SecItemCopyMatching is a Security.framework C function.
         // dict_as_cf is a toll-free bridge cast (Bridge.idr TollFreePair).
         // On success, `result` receives a retained CFData (toll-free bridged with NSData).
-        let status =
-            unsafe { SecItemCopyMatching(dict_as_cf(&dict), &mut result) };
+        let status = unsafe { SecItemCopyMatching(dict_as_cf(&dict), &mut result) };
 
         match status {
             ERR_SEC_SUCCESS => {
@@ -745,8 +727,7 @@ impl NativeKeychain for IosBridge {
         let ns_service = NSString::from_str(KEYCHAIN_SERVICE);
 
         // SAFETY: Security.framework extern statics (process-lifetime constants).
-        let keys: Vec<&NSString> =
-            unsafe { vec![kSecClass, kSecAttrAccount, kSecAttrService] };
+        let keys: Vec<&NSString> = unsafe { vec![kSecClass, kSecAttrAccount, kSecAttrService] };
         // SAFETY: Toll-free bridge casts (Bridge.idr TollFreePair).
         let values: Vec<&AnyObject> = unsafe {
             vec![
@@ -794,16 +775,13 @@ impl IosBridge {
         // SAFETY: Security.framework extern static (process-lifetime constant).
         let update_keys: Vec<&NSString> = unsafe { vec![kSecValueData] };
         // SAFETY: nsdata_as_obj is a toll-free bridge cast (Bridge.idr TollFreePair).
-        let update_values: Vec<&AnyObject> =
-            unsafe { vec![nsdata_as_obj(&ns_data)] };
+        let update_values: Vec<&AnyObject> = unsafe { vec![nsdata_as_obj(&ns_data)] };
         let update = NSDictionary::from_slices(&update_keys, &update_values);
 
         // SAFETY: SecItemUpdate is a Security.framework C function.
         // dict_as_cf casts NSDictionary→CFDictionary (toll-free bridged).
         // Bridge.idr KeychainProperty LastWriteWins proves update semantics.
-        let status = unsafe {
-            SecItemUpdate(dict_as_cf(&query), dict_as_cf(&update))
-        };
+        let status = unsafe { SecItemUpdate(dict_as_cf(&query), dict_as_cf(&update)) };
 
         if status == ERR_SEC_SUCCESS {
             Ok(())
@@ -839,9 +817,7 @@ impl NativeShare for IosBridge {
 
         // UIActivityViewController expects an NSArray of activity items.
         // We upcast NSURL -> AnyObject via Retained::into_super.
-        let url_as_obj: Retained<AnyObject> = Retained::into_super(
-            Retained::into_super(url),
-        );
+        let url_as_obj: Retained<AnyObject> = Retained::into_super(Retained::into_super(url));
         let items = NSArray::from_retained_slice(&[url_as_obj]);
 
         // SAFETY: ObjC alloc+init pattern for UIActivityViewController.
@@ -862,11 +838,7 @@ impl NativeShare for IosBridge {
         // Main-thread satisfied by require_main_thread() above
         // (Bridge.idr threadReq ShareFile = MainThread).
         unsafe {
-            root_vc.presentViewController_animated_completion(
-                &activity_vc,
-                true,
-                None,
-            );
+            root_vc.presentViewController_animated_completion(&activity_vc, true, None);
         }
 
         Ok(())

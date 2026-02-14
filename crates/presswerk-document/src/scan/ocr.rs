@@ -169,14 +169,13 @@ impl OcrEngine {
         config.validate()?;
 
         info!("Loading OCR detection model");
-        let detection_model =
-            Model::load_file(&config.detection_model_path).map_err(|err| {
-                PresswerkError::OcrError(format!(
-                    "failed to load detection model from {}: {}",
-                    config.detection_model_path.display(),
-                    err
-                ))
-            })?;
+        let detection_model = Model::load_file(&config.detection_model_path).map_err(|err| {
+            PresswerkError::OcrError(format!(
+                "failed to load detection model from {}: {}",
+                config.detection_model_path.display(),
+                err
+            ))
+        })?;
 
         info!("Loading OCR recognition model");
         let recognition_model =
@@ -240,13 +239,12 @@ impl OcrEngine {
         let (width, height) = rgb.dimensions();
 
         // Prepare the image source for the engine.
-        let source =
-            ImageSource::from_bytes(rgb.as_raw(), (width, height)).map_err(|err| {
-                PresswerkError::OcrError(format!(
-                    "failed to create image source ({}x{}): {}",
-                    width, height, err
-                ))
-            })?;
+        let source = ImageSource::from_bytes(rgb.as_raw(), (width, height)).map_err(|err| {
+            PresswerkError::OcrError(format!(
+                "failed to create image source ({}x{}): {}",
+                width, height, err
+            ))
+        })?;
 
         let input = self.engine.prepare_input(source).map_err(|err| {
             PresswerkError::OcrError(format!("OCR preprocessing failed: {}", err))
@@ -289,22 +287,22 @@ impl OcrEngine {
         let rgb = image.to_rgb8();
         let (width, height) = rgb.dimensions();
 
-        let source =
-            ImageSource::from_bytes(rgb.as_raw(), (width, height)).map_err(|err| {
-                PresswerkError::OcrError(format!(
-                    "failed to create image source ({}x{}): {}",
-                    width, height, err
-                ))
-            })?;
+        let source = ImageSource::from_bytes(rgb.as_raw(), (width, height)).map_err(|err| {
+            PresswerkError::OcrError(format!(
+                "failed to create image source ({}x{}): {}",
+                width, height, err
+            ))
+        })?;
 
         let input = self.engine.prepare_input(source).map_err(|err| {
             PresswerkError::OcrError(format!("OCR preprocessing failed: {}", err))
         })?;
 
         // Step 1: Detect word bounding boxes.
-        let word_rects = self.engine.detect_words(&input).map_err(|err| {
-            PresswerkError::OcrError(format!("word detection failed: {}", err))
-        })?;
+        let word_rects = self
+            .engine
+            .detect_words(&input)
+            .map_err(|err| PresswerkError::OcrError(format!("word detection failed: {}", err)))?;
         debug!(word_count = word_rects.len(), "Words detected");
 
         // Step 2: Group words into text lines.
@@ -315,9 +313,7 @@ impl OcrEngine {
         let line_texts = self
             .engine
             .recognize_text(&input, &line_rects)
-            .map_err(|err| {
-                PresswerkError::OcrError(format!("line recognition failed: {}", err))
-            })?;
+            .map_err(|err| PresswerkError::OcrError(format!("line recognition failed: {}", err)))?;
 
         // Build the result, filtering out empty lines.
         let mut results = Vec::with_capacity(line_texts.len());
@@ -410,10 +406,7 @@ mod tests {
     #[test]
     fn config_from_paths() {
         let config = OcrConfig::from_paths("/a/detect.rten", "/b/recog.rten");
-        assert_eq!(
-            config.detection_model_path,
-            PathBuf::from("/a/detect.rten")
-        );
+        assert_eq!(config.detection_model_path, PathBuf::from("/a/detect.rten"));
         assert_eq!(
             config.recognition_model_path,
             PathBuf::from("/b/recog.rten")

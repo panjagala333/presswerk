@@ -82,7 +82,12 @@ impl PrinterDiscovery {
         // Spawn a background thread per service type to drain the receiver
         // channel and update the shared printer map.
         Self::spawn_listener(IPP_SERVICE, false, ipp_receiver, Arc::clone(&self.printers));
-        Self::spawn_listener(IPPS_SERVICE, true, ipps_receiver, Arc::clone(&self.printers));
+        Self::spawn_listener(
+            IPPS_SERVICE,
+            true,
+            ipps_receiver,
+            Arc::clone(&self.printers),
+        );
 
         self.browsing = true;
         info!("mDNS printer discovery started");
@@ -229,14 +234,10 @@ fn service_info_to_printer(info: &ServiceInfo, tls: bool) -> Result<DiscoveredPr
         .find(|a| a.is_ipv4())
         .or_else(|| info.get_addresses().iter().next())
         .copied()
-        .ok_or_else(|| {
-            PresswerkError::Discovery(format!("no address for service {name}"))
-        })?;
+        .ok_or_else(|| PresswerkError::Discovery(format!("no address for service {name}")))?;
 
     // Build the IPP URI from TXT `rp` key or fall back to "ipp/print".
-    let resource_path = info
-        .get_property_val_str("rp")
-        .unwrap_or("ipp/print");
+    let resource_path = info.get_property_val_str("rp").unwrap_or("ipp/print");
 
     let scheme = if tls { "ipps" } else { "ipp" };
     let uri = format!("{scheme}://{ip}:{port}/{resource_path}");
@@ -245,8 +246,12 @@ fn service_info_to_printer(info: &ServiceInfo, tls: bool) -> Result<DiscoveredPr
     let supports_color = txt_bool(info, "Color");
     let supports_duplex = txt_bool(info, "Duplex");
 
-    let make_and_model = info.get_property_val_str("printer-make-and-model").map(String::from);
-    let location = info.get_property_val_str("printer-location").map(String::from);
+    let make_and_model = info
+        .get_property_val_str("printer-make-and-model")
+        .map(String::from);
+    let location = info
+        .get_property_val_str("printer-location")
+        .map(String::from);
 
     Ok(DiscoveredPrinter {
         name,
@@ -275,9 +280,7 @@ mod tests {
     fn txt_bool_logic_parses_true_variants() {
         // Tests the boolean-parsing logic used by `txt_bool`.
         // Full integration with `ServiceInfo` requires a live mDNS network.
-        let parse = |v: &str| {
-            v.eq_ignore_ascii_case("t") || v.eq_ignore_ascii_case("true")
-        };
+        let parse = |v: &str| v.eq_ignore_ascii_case("t") || v.eq_ignore_ascii_case("true");
         assert!(parse("T"));
         assert!(parse("t"));
         assert!(parse("true"));

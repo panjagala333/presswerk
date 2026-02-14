@@ -31,6 +31,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -42,9 +43,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use presswerk_core::error::{PresswerkError, Result};
-use presswerk_core::types::{
-    DocumentType, JobId, JobSource, JobStatus, PrintJob, ServerStatus,
-};
+use presswerk_core::types::{DocumentType, JobId, JobSource, JobStatus, PrintJob, ServerStatus};
 
 use crate::queue::JobQueue;
 
@@ -227,7 +226,9 @@ impl IppAttributeGroup {
     fn get_integer(&self, name: &str) -> Option<i32> {
         self.get(name).and_then(|a| {
             if a.value.len() == 4 {
-                Some(i32::from_be_bytes([a.value[0], a.value[1], a.value[2], a.value[3]]))
+                Some(i32::from_be_bytes([
+                    a.value[0], a.value[1], a.value[2], a.value[3],
+                ]))
             } else {
                 None
             }
@@ -574,6 +575,8 @@ struct SharedState {
     next_ipp_job_id: Arc<AtomicU32>,
     /// Map from IPP integer job-id to our internal UUID-based JobId.
     ipp_to_internal: Arc<Mutex<HashMap<i32, JobId>>>,
+    /// Directory for persisting document data files.
+    data_dir: PathBuf,
 }
 
 // ---------------------------------------------------------------------------
@@ -600,6 +603,8 @@ pub struct IppServer {
     mdns_daemon: Option<mdns_sd::ServiceDaemon>,
     /// The mDNS service fullname (for unregistration on stop).
     mdns_fullname: Option<String>,
+    /// Root directory for persistent data (documents subdirectory lives here).
+    data_dir: PathBuf,
 }
 
 impl IppServer {
@@ -607,7 +612,11 @@ impl IppServer {
     ///
     /// The server is created in `Stopped` state.  Call [`start`] to begin
     /// accepting connections.
-    pub fn new(port: Option<u16>) -> Self {
+    ///
+    /// `data_dir` specifies the root directory where document data is persisted.
+    /// If `None`, a temporary directory is used (suitable for tests).
+    pub fn new(port: Option<u16>, data_dir: Option<PathBuf>) -> Self {
+        let data_dir = data_dir.unwrap_or_else(|| std::env::temp_dir().join("presswerk"));
         Self {
             port: port.unwrap_or(DEFAULT_PORT),
             status: ServerStatus::Stopped,
@@ -616,6 +625,7 @@ impl IppServer {
             active_connections: Arc::new(AtomicU32::new(0)),
             mdns_daemon: None,
             mdns_fullname: None,
+            data_dir,
         }
     }
 
@@ -632,6 +642,27 @@ impl IppServer {
     /// Return the number of currently active client connections.
     pub fn active_connections(&self) -> u32 {
         self.active_connections.load(Ordering::Relaxed)
+    }
+
+    /// Return the filesystem path where a document with the given hash is
+    /// (or would be) stored.
+    ///
+    /// The path is `{data_dir}/documents/{hash}.dat`.  This method does not
+    /// check whether the file actually exists on disk.
+    pub fn document_path(&self, hash: &str) -> PathBuf {
+        self.data_dir.join("documents").join(format!("{hash}.dat"))
+    }
+
+    /// Read the raw document bytes for the given content hash from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file does not exist or cannot be read.
+    pub fn retrieve_document(&self, hash: &str) -> Result<Vec<u8>> {
+        let path = self.document_path(hash);
+        std::fs::read(&path).map_err(|e| {
+            PresswerkError::PrintServer(format!("read document {}: {e}", path.display()))
+        })
     }
 
     /// Start the IPP print server.
@@ -666,6 +697,16 @@ impl IppServer {
         // Register via mDNS so other devices discover us.
         self.register_mdns();
 
+        // Ensure the documents subdirectory exists for persisting print data.
+        let documents_dir = self.data_dir.join("documents");
+        std::fs::create_dir_all(&documents_dir).map_err(|e| {
+            PresswerkError::PrintServer(format!(
+                "create documents directory {}: {e}",
+                documents_dir.display()
+            ))
+        })?;
+        info!(path = %documents_dir.display(), "document storage directory ready");
+
         let shutdown = Arc::clone(&self.shutdown_signal);
         let connections = Arc::clone(&self.active_connections);
         let port = self.port;
@@ -676,6 +717,7 @@ impl IppServer {
             port,
             next_ipp_job_id: Arc::new(AtomicU32::new(1)),
             ipp_to_internal: Arc::new(Mutex::new(HashMap::new())),
+            data_dir: self.data_dir.clone(),
         });
 
         let handle = tokio::spawn(async move {
@@ -740,8 +782,7 @@ impl IppServer {
             ("URF", "none"),
         ];
 
-        let hostname = std::env::var("HOSTNAME")
-            .unwrap_or_else(|_| "presswerk".into());
+        let hostname = std::env::var("HOSTNAME").unwrap_or_else(|_| "presswerk".into());
 
         let service_name = PRINTER_NAME.to_string();
 
@@ -749,7 +790,7 @@ impl IppServer {
             IPP_SERVICE_TYPE,
             &service_name,
             &format!("{hostname}.local."),
-            "",  // empty = auto-detect IP
+            "", // empty = auto-detect IP
             self.port,
             &properties[..],
         ) {
@@ -936,11 +977,7 @@ impl IppServer {
 // ---------------------------------------------------------------------------
 
 /// Route the parsed IPP request to the appropriate handler.
-fn dispatch_operation(
-    request: &IppRequest,
-    peer_addr: SocketAddr,
-    state: &SharedState,
-) -> Vec<u8> {
+fn dispatch_operation(request: &IppRequest, peer_addr: SocketAddr, state: &SharedState) -> Vec<u8> {
     match request.operation_id {
         OP_PRINT_JOB => handle_print_job(request, peer_addr, state),
         OP_VALIDATE_JOB => handle_validate_job(request),
@@ -955,10 +992,7 @@ fn dispatch_operation(
             build_error_response(
                 STATUS_SERVER_ERROR_OPERATION_NOT_SUPPORTED,
                 request.request_id,
-                &format!(
-                    "Operation 0x{:04X} is not supported",
-                    request.operation_id
-                ),
+                &format!("Operation 0x{:04X} is not supported", request.operation_id),
             )
         }
     }
@@ -972,11 +1006,7 @@ fn dispatch_operation(
 ///
 /// Creates a new `PrintJob`, stores it in the `JobQueue`, and returns
 /// a response with the job-id and job-state.
-fn handle_print_job(
-    request: &IppRequest,
-    peer_addr: SocketAddr,
-    state: &SharedState,
-) -> Vec<u8> {
+fn handle_print_job(request: &IppRequest, peer_addr: SocketAddr, state: &SharedState) -> Vec<u8> {
     let op_attrs = request.operation_attributes();
 
     // Extract the document name from operation attributes.
@@ -1007,7 +1037,7 @@ fn handle_print_job(
         JobSource::Network { remote_addr: ip },
         document_type,
         document_name.clone(),
-        document_hash,
+        document_hash.clone(),
     );
 
     let internal_job_id = job.id;
@@ -1042,10 +1072,47 @@ fn handle_print_job(
         }
     }
 
-    // TODO: Store document_data to disk referenced by document_hash.
-    // For now, the data is accepted but only the metadata is persisted.
-    // A real implementation would write request.document_data to a
-    // content-addressed file store.
+    // Persist document data to disk using content-addressed storage.
+    // If the file already exists we skip the write -- same hash means
+    // identical content, so the existing file is already correct.
+    if !request.document_data.is_empty() {
+        let doc_path = state
+            .data_dir
+            .join("documents")
+            .join(format!("{document_hash}.dat"));
+
+        if doc_path.exists() {
+            info!(
+                hash = %document_hash,
+                path = %doc_path.display(),
+                "document already on disk (content-addressed); skipping write"
+            );
+        } else {
+            match std::fs::write(&doc_path, &request.document_data) {
+                Ok(()) => {
+                    info!(
+                        hash = %document_hash,
+                        path = %doc_path.display(),
+                        bytes = request.document_data.len(),
+                        "document data persisted to disk"
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        hash = %document_hash,
+                        path = %doc_path.display(),
+                        error = %e,
+                        "failed to persist document data to disk"
+                    );
+                    return build_error_response(
+                        STATUS_SERVER_ERROR_INTERNAL,
+                        request.request_id,
+                        &format!("Failed to store document data: {e}"),
+                    );
+                }
+            }
+        }
+    }
 
     info!(
         ipp_job_id = ipp_job_id,
@@ -1301,10 +1368,7 @@ fn build_error_response(status: u16, request_id: u32, message: &str) -> Vec<u8> 
 }
 
 /// Send an IPP response wrapped in a minimal HTTP/1.1 200 OK.
-async fn send_response(
-    stream: &mut tokio::net::TcpStream,
-    ipp_body: &[u8],
-) -> Result<()> {
+async fn send_response(stream: &mut tokio::net::TcpStream, ipp_body: &[u8]) -> Result<()> {
     let http_response = format!(
         "HTTP/1.1 200 OK\r\n\
          Content-Type: application/ipp\r\n\
@@ -1380,19 +1444,19 @@ mod tests {
 
     #[test]
     fn default_port_is_631() {
-        let server = IppServer::new(None);
+        let server = IppServer::new(None, None);
         assert_eq!(server.port(), 631);
     }
 
     #[test]
     fn custom_port_is_respected() {
-        let server = IppServer::new(Some(9100));
+        let server = IppServer::new(Some(9100), None);
         assert_eq!(server.port(), 9100);
     }
 
     #[test]
     fn initial_status_is_stopped() {
-        let server = IppServer::new(None);
+        let server = IppServer::new(None, None);
         assert_eq!(server.status(), ServerStatus::Stopped);
     }
 
@@ -1588,9 +1652,7 @@ mod tests {
         assert_eq!(parsed.operation_id, STATUS_CLIENT_ERROR_BAD_REQUEST);
         assert_eq!(parsed.request_id, 10);
 
-        let op_group = parsed
-            .operation_attributes()
-            .expect("should have op attrs");
+        let op_group = parsed.operation_attributes().expect("should have op attrs");
         assert_eq!(
             op_group.get_string("status-message").as_deref(),
             Some("bad request")
@@ -1634,10 +1696,7 @@ mod tests {
         assert_eq!(mime_to_document_type("image/jpeg"), DocumentType::Jpeg);
         assert_eq!(mime_to_document_type("image/png"), DocumentType::Png);
         assert_eq!(mime_to_document_type("image/tiff"), DocumentType::Tiff);
-        assert_eq!(
-            mime_to_document_type("text/plain"),
-            DocumentType::PlainText
-        );
+        assert_eq!(mime_to_document_type("text/plain"), DocumentType::PlainText);
     }
 
     #[test]
@@ -1656,7 +1715,10 @@ mod tests {
 
     #[test]
     fn job_status_to_ipp_state_mapping() {
-        assert_eq!(job_status_to_ipp_state(JobStatus::Pending), JOB_STATE_PENDING);
+        assert_eq!(
+            job_status_to_ipp_state(JobStatus::Pending),
+            JOB_STATE_PENDING
+        );
         assert_eq!(job_status_to_ipp_state(JobStatus::Held), JOB_STATE_HELD);
         assert_eq!(
             job_status_to_ipp_state(JobStatus::Processing),
@@ -1670,20 +1732,40 @@ mod tests {
             job_status_to_ipp_state(JobStatus::Cancelled),
             JOB_STATE_CANCELED
         );
-        assert_eq!(job_status_to_ipp_state(JobStatus::Failed), JOB_STATE_ABORTED);
+        assert_eq!(
+            job_status_to_ipp_state(JobStatus::Failed),
+            JOB_STATE_ABORTED
+        );
     }
 
     // -- Operation dispatch (integration-style) -----------------------------
 
-    fn make_shared_state() -> SharedState {
+    /// Create a temporary directory for test document storage.
+    fn make_test_data_dir() -> tempfile::TempDir {
+        tempfile::TempDir::new().expect("create temp dir for test data")
+    }
+
+    fn make_shared_state_with_dir(data_dir: &std::path::Path) -> SharedState {
         let queue = JobQueue::open_in_memory().expect("open in-memory queue");
+        let documents_dir = data_dir.join("documents");
+        std::fs::create_dir_all(&documents_dir).expect("create documents dir");
         SharedState {
             job_queue: Arc::new(Mutex::new(queue)),
             active_connections: Arc::new(AtomicU32::new(0)),
             port: 9100,
             next_ipp_job_id: Arc::new(AtomicU32::new(1)),
             ipp_to_internal: Arc::new(Mutex::new(HashMap::new())),
+            data_dir: data_dir.to_path_buf(),
         }
+    }
+
+    fn make_shared_state() -> SharedState {
+        let tmp = make_test_data_dir();
+        // Leak the TempDir so it lives for the duration of the test.
+        // Tests that need the TempDir handle should use make_shared_state_with_dir.
+        let path = tmp.path().to_path_buf();
+        std::mem::forget(tmp);
+        make_shared_state_with_dir(&path)
     }
 
     #[test]
@@ -1755,9 +1837,7 @@ mod tests {
             .find(|g| g.delimiter == TAG_JOB_ATTRIBUTES)
             .expect("should have job attributes group");
 
-        let ipp_job_id = job_group
-            .get_integer("job-id")
-            .expect("should have job-id");
+        let ipp_job_id = job_group.get_integer("job-id").expect("should have job-id");
         assert!(ipp_job_id > 0);
 
         // Verify the job was inserted into the queue.
@@ -1843,8 +1923,7 @@ mod tests {
         for i in 0..2 {
             let name_bytes = format!("Job {i}");
             let attrs = vec![(VALUE_TAG_NAME, "job-name", name_bytes.as_bytes())];
-            let data =
-                build_test_ipp_request(OP_PRINT_JOB, 100 + i as u32, &attrs, b"data");
+            let data = build_test_ipp_request(OP_PRINT_JOB, 100 + i as u32, &attrs, b"data");
             let req = parse_ipp_request(&data).unwrap();
             dispatch_operation(&req, peer, &state);
         }
@@ -1884,7 +1963,7 @@ mod tests {
 
     #[test]
     fn active_connections_starts_at_zero() {
-        let server = IppServer::new(None);
+        let server = IppServer::new(None, None);
         assert_eq!(server.active_connections(), 0);
     }
 
@@ -1920,17 +1999,172 @@ mod tests {
         // First attribute: "test-attr" with value "first-value"
         let first = &group.attributes[0];
         assert_eq!(first.name, "test-attr");
-        assert_eq!(
-            String::from_utf8_lossy(&first.value),
-            "first-value"
-        );
+        assert_eq!(String::from_utf8_lossy(&first.value), "first-value");
 
         // Second attribute: empty name with value "second-value"
         let second = &group.attributes[1];
         assert_eq!(second.name, "");
-        assert_eq!(
-            String::from_utf8_lossy(&second.value),
-            "second-value"
+        assert_eq!(String::from_utf8_lossy(&second.value), "second-value");
+    }
+
+    // -- Document storage ---------------------------------------------------
+
+    #[test]
+    fn print_job_persists_document_to_disk() {
+        let tmp = make_test_data_dir();
+        let state = make_shared_state_with_dir(tmp.path());
+
+        let doc = b"%%PDF-1.4 test document content";
+        let attrs = vec![
+            (VALUE_TAG_NAME, "job-name", b"Storage Test" as &[u8]),
+            (VALUE_TAG_KEYWORD, "document-format", b"application/pdf"),
+        ];
+        let data = build_test_ipp_request(OP_PRINT_JOB, 200, &attrs, doc);
+        let req = parse_ipp_request(&data).unwrap();
+        let peer: SocketAddr = "10.0.0.1:9999".parse().unwrap();
+
+        let response = dispatch_operation(&req, peer, &state);
+        let parsed = parse_ipp_request(&response).unwrap();
+        assert_eq!(parsed.operation_id, STATUS_OK);
+
+        // Compute the expected hash.
+        let mut hasher = Sha256::new();
+        hasher.update(doc);
+        let expected_hash = hex::encode(hasher.finalize());
+
+        // Verify the file was written to disk.
+        let doc_path = tmp
+            .path()
+            .join("documents")
+            .join(format!("{expected_hash}.dat"));
+        assert!(doc_path.exists(), "document file should exist on disk");
+
+        let stored = std::fs::read(&doc_path).expect("read stored document");
+        assert_eq!(stored, doc, "stored content should match original");
+    }
+
+    #[test]
+    fn print_job_skips_write_for_duplicate_hash() {
+        let tmp = make_test_data_dir();
+        let state = make_shared_state_with_dir(tmp.path());
+
+        let doc = b"identical content for dedup test";
+        let peer: SocketAddr = "10.0.0.1:9999".parse().unwrap();
+
+        // Submit the same document data twice (different job names).
+        for i in 0..2u32 {
+            let name = format!("Dedup Test {i}");
+            let attrs = vec![(VALUE_TAG_NAME, "job-name", name.as_bytes())];
+            let data = build_test_ipp_request(OP_PRINT_JOB, 300 + i, &attrs, doc);
+            let req = parse_ipp_request(&data).unwrap();
+            let response = dispatch_operation(&req, peer, &state);
+            let parsed = parse_ipp_request(&response).unwrap();
+            assert_eq!(parsed.operation_id, STATUS_OK);
+        }
+
+        // Compute hash and verify a single file exists with correct content.
+        let mut hasher = Sha256::new();
+        hasher.update(doc);
+        let expected_hash = hex::encode(hasher.finalize());
+
+        let doc_path = tmp
+            .path()
+            .join("documents")
+            .join(format!("{expected_hash}.dat"));
+        assert!(doc_path.exists());
+
+        let stored = std::fs::read(&doc_path).expect("read stored document");
+        assert_eq!(stored, doc);
+    }
+
+    #[test]
+    fn print_job_empty_document_not_written() {
+        let tmp = make_test_data_dir();
+        let state = make_shared_state_with_dir(tmp.path());
+
+        // Submit a job with empty document data.
+        let data = build_test_ipp_request(OP_PRINT_JOB, 400, &[], &[]);
+        let req = parse_ipp_request(&data).unwrap();
+        let peer: SocketAddr = "10.0.0.1:9999".parse().unwrap();
+
+        let response = dispatch_operation(&req, peer, &state);
+        let parsed = parse_ipp_request(&response).unwrap();
+        assert_eq!(parsed.operation_id, STATUS_OK);
+
+        // The documents directory should have no files (empty data is hashed
+        // as "empty", but the write is skipped for empty payloads).
+        let entries: Vec<_> = std::fs::read_dir(tmp.path().join("documents"))
+            .expect("read documents dir")
+            .collect();
+        assert!(
+            entries.is_empty(),
+            "no document file should be written for empty data"
         );
+    }
+
+    #[test]
+    fn document_path_returns_expected_location() {
+        let tmp = make_test_data_dir();
+        let server = IppServer::new(None, Some(tmp.path().to_path_buf()));
+
+        let path = server.document_path("abc123");
+        assert_eq!(path, tmp.path().join("documents").join("abc123.dat"));
+    }
+
+    #[test]
+    fn retrieve_document_reads_stored_file() {
+        let tmp = make_test_data_dir();
+        let server = IppServer::new(None, Some(tmp.path().to_path_buf()));
+
+        // Manually write a document file.
+        let documents_dir = tmp.path().join("documents");
+        std::fs::create_dir_all(&documents_dir).unwrap();
+        let content = b"test document bytes";
+        std::fs::write(documents_dir.join("deadbeef.dat"), content).unwrap();
+
+        let retrieved = server
+            .retrieve_document("deadbeef")
+            .expect("should read document");
+        assert_eq!(retrieved, content);
+    }
+
+    #[test]
+    fn retrieve_document_returns_error_for_missing_file() {
+        let tmp = make_test_data_dir();
+        let server = IppServer::new(None, Some(tmp.path().to_path_buf()));
+
+        let result = server.retrieve_document("nonexistent");
+        assert!(result.is_err(), "should return error for missing document");
+    }
+
+    #[test]
+    fn retrieve_document_roundtrip_via_print_job() {
+        let tmp = make_test_data_dir();
+        let state = make_shared_state_with_dir(tmp.path());
+        let server = IppServer::new(None, Some(tmp.path().to_path_buf()));
+
+        // Ensure documents dir exists (normally done by start()).
+        std::fs::create_dir_all(tmp.path().join("documents")).unwrap();
+
+        let doc = b"roundtrip content verification payload";
+        let attrs = vec![(VALUE_TAG_NAME, "job-name", b"Roundtrip Test" as &[u8])];
+        let data = build_test_ipp_request(OP_PRINT_JOB, 500, &attrs, doc);
+        let req = parse_ipp_request(&data).unwrap();
+        let peer: SocketAddr = "10.0.0.1:9999".parse().unwrap();
+
+        let response = dispatch_operation(&req, peer, &state);
+        let parsed = parse_ipp_request(&response).unwrap();
+        assert_eq!(parsed.operation_id, STATUS_OK);
+
+        // Compute the hash the same way the server does.
+        let mut hasher = Sha256::new();
+        hasher.update(doc);
+        let hash = hex::encode(hasher.finalize());
+
+        // Retrieve through the public API.
+        let retrieved = server
+            .retrieve_document(&hash)
+            .expect("should retrieve document");
+        assert_eq!(retrieved, doc, "retrieved content must match original");
     }
 }

@@ -5,9 +5,9 @@
 
 use dioxus::prelude::*;
 
+use crate::Route;
 use crate::services::app_services::AppServices;
 use crate::state::AppState;
-use crate::Route;
 
 #[component]
 pub fn Home() -> Element {

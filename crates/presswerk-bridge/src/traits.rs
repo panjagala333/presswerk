@@ -6,7 +6,9 @@
 use presswerk_core::error::Result;
 
 /// Unified bridge that groups all native capabilities.
-pub trait PlatformBridge: NativePrint + NativeCamera + NativeFilePicker + NativeKeychain + NativeShare {
+pub trait PlatformBridge:
+    NativePrint + NativeCamera + NativeFilePicker + NativeKeychain + NativeShare
+{
     /// Human-readable platform name (e.g. "iOS 17", "Android 14").
     fn platform_name(&self) -> &str;
 }

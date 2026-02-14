@@ -17,7 +17,7 @@ use std::path::Path;
 
 use chrono::Utc;
 use presswerk_core::error::PresswerkError;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
 
@@ -134,10 +134,7 @@ impl AuditLog {
 
     /// Retrieve all entries for a given document hash, ordered by timestamp
     /// ascending.
-    pub fn entries_for_hash(
-        &self,
-        document_hash: &str,
-    ) -> Result<Vec<AuditEntry>, PresswerkError> {
+    pub fn entries_for_hash(&self, document_hash: &str) -> Result<Vec<AuditEntry>, PresswerkError> {
         let mut stmt = self
             .conn
             .prepare(

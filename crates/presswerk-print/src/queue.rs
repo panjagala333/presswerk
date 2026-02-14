@@ -9,13 +9,11 @@
 // referenced by their SHA-256 hash.
 
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use tracing::{debug, info, instrument};
 
 use presswerk_core::error::{PresswerkError, Result};
-use presswerk_core::types::{
-    DocumentType, JobId, JobSource, JobStatus, PrintJob, PrintSettings,
-};
+use presswerk_core::types::{DocumentType, JobId, JobSource, JobStatus, PrintJob, PrintSettings};
 
 /// SQLite schema for the jobs table.
 const CREATE_TABLE_SQL: &str = r#"
@@ -141,9 +139,7 @@ impl JobQueue {
             .map_err(|e| PresswerkError::Database(format!("update status: {e}")))?;
 
         if rows == 0 {
-            return Err(PresswerkError::Database(format!(
-                "job {job_id} not found"
-            )));
+            return Err(PresswerkError::Database(format!("job {job_id} not found")));
         }
 
         debug!(job_id = %job_id, status = ?status, "job status updated");
@@ -266,66 +262,36 @@ fn row_to_print_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<PrintJob> {
     // Parse the UUID.  If the stored value is malformed we surface a
     // meaningful error rather than panicking.
     let uuid = uuid::Uuid::parse_str(&id_str).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Text,
-            Box::new(e),
-        )
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
     })?;
 
     let source: JobSource = serde_json::from_str(&source_json).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(
-            1,
-            rusqlite::types::Type::Text,
-            Box::new(e),
-        )
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
     })?;
 
     let status: JobStatus = serde_json::from_str(&status_json).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(
-            2,
-            rusqlite::types::Type::Text,
-            Box::new(e),
-        )
+        rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
     })?;
 
     let document_type: DocumentType = serde_json::from_str(&doc_type_json).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(
-            3,
-            rusqlite::types::Type::Text,
-            Box::new(e),
-        )
+        rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
     })?;
 
     let settings: PrintSettings = serde_json::from_str(&settings_json).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(
-            6,
-            rusqlite::types::Type::Text,
-            Box::new(e),
-        )
+        rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
     })?;
 
-    let created_at: DateTime<Utc> =
-        DateTime::parse_from_rfc3339(&created_at_str)
-            .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    8,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )
-            })?;
+    let created_at: DateTime<Utc> = DateTime::parse_from_rfc3339(&created_at_str)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(e))
+        })?;
 
-    let updated_at: DateTime<Utc> =
-        DateTime::parse_from_rfc3339(&updated_at_str)
-            .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    9,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )
-            })?;
+    let updated_at: DateTime<Utc> = DateTime::parse_from_rfc3339(&updated_at_str)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(e))
+        })?;
 
     Ok(PrintJob {
         id: JobId(uuid),
@@ -440,7 +406,9 @@ mod tests {
         queue.insert_job(&job).expect("insert");
 
         queue.delete_job(&job.id).expect("delete first time");
-        queue.delete_job(&job.id).expect("delete second time (idempotent)");
+        queue
+            .delete_job(&job.id)
+            .expect("delete second time (idempotent)");
 
         let result = queue.get_job(&job.id).expect("get_job");
         assert!(result.is_none());

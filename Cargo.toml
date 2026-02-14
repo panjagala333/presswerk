@@ -58,6 +58,9 @@ hex = "0.4"
 dioxus = { version = "0.7", features = ["desktop", "router", "html", "hooks", "signals"] }
 rfd = "0.17"
 
+# Testing
+tempfile = "3"
+
 # Internal crates
 presswerk-core = { path = "crates/presswerk-core" }
 presswerk-security = { path = "crates/presswerk-security" }

@@ -9,8 +9,8 @@ use imageproc::edges::canny;
 use imageproc::filter::gaussian_blur_f32;
 use imageproc::geometric_transformations::{Interpolation, Projection, warp_into};
 use imageproc::hough::{LineDetectionOptions, PolarLine, detect_lines};
-use presswerk_core::error::PresswerkError;
 use presswerk_core::PaperSize;
+use presswerk_core::error::PresswerkError;
 use tracing::{debug, info, instrument, warn};
 
 use crate::image::processor::ImageProcessor;
@@ -101,14 +101,7 @@ impl ScanEnhancer {
 
         for y in 0..height {
             for x in 0..width {
-                let local_mean = region_mean(
-                    &integral,
-                    width,
-                    height,
-                    x,
-                    y,
-                    block_radius,
-                );
+                let local_mean = region_mean(&integral, width, height, x, y, block_radius);
                 let threshold = (local_mean as i32 - c).clamp(0, 255) as u8;
                 let pixel_val = gray.get_pixel(x, y).0[0];
                 let binary = if pixel_val < threshold { 0u8 } else { 255u8 };
@@ -233,7 +226,10 @@ impl ScanEnhancer {
             suppression_radius: 8,
         };
         let lines = detect_lines(&edges, options);
-        debug!(line_count = lines.len(), vote_threshold, "Hough lines detected");
+        debug!(
+            line_count = lines.len(),
+            vote_threshold, "Hough lines detected"
+        );
 
         if lines.len() < 4 {
             warn!(
@@ -271,12 +267,7 @@ impl ScanEnhancer {
         let right_line = find_extreme_line(&vertical, orig_w, orig_h, EdgeKind::Right);
 
         // Step 7: Compute the four corner points from line intersections.
-        let corners = match compute_quad_corners(
-            &top_line,
-            &bottom_line,
-            &left_line,
-            &right_line,
-        ) {
+        let corners = match compute_quad_corners(&top_line, &bottom_line, &left_line, &right_line) {
             Some(c) => c,
             None => {
                 warn!("Could not compute all four corner intersections; returning unchanged");
@@ -317,18 +308,13 @@ impl ScanEnhancer {
         let out_h = paper_h_px.min(orig_h);
 
         let dest: [(f32, f32); 4] = [
-            (0.0, 0.0),                  // top-left
+            (0.0, 0.0),                   // top-left
             (out_w as f32, 0.0),          // top-right
             (out_w as f32, out_h as f32), // bottom-right
             (0.0, out_h as f32),          // bottom-left
         ];
 
-        let src: [(f32, f32); 4] = [
-            corners[0],
-            corners[1],
-            corners[2],
-            corners[3],
-        ];
+        let src: [(f32, f32); 4] = [corners[0], corners[1], corners[2], corners[3]];
 
         // Step 9: Build the projective transform and warp.
         // from_control_points computes the mapping from `src` to `dest`.
@@ -344,13 +330,15 @@ impl ScanEnhancer {
         let default_pixel = Rgba([255u8, 255, 255, 255]);
         let mut output = RgbaImage::new(out_w, out_h);
 
-        warp_into(&rgba_input, &projection, Interpolation::Bilinear, default_pixel, &mut output);
-
-        info!(
-            out_w,
-            out_h,
-            "Perspective correction applied"
+        warp_into(
+            &rgba_input,
+            &projection,
+            Interpolation::Bilinear,
+            default_pixel,
+            &mut output,
         );
+
+        info!(out_w, out_h, "Perspective correction applied");
 
         Self {
             image: DynamicImage::ImageRgba8(output),
@@ -368,8 +356,7 @@ impl ScanEnhancer {
     pub fn scan_to_pdf(&self) -> Result<Vec<u8>, PresswerkError> {
         info!(paper = ?self.paper_size, "Converting scan to PDF");
 
-        let png_bytes = ImageProcessor::from_dynamic(self.image.clone())
-            .to_png_bytes()?;
+        let png_bytes = ImageProcessor::from_dynamic(self.image.clone()).to_png_bytes()?;
 
         let mut writer = PdfWriter::new(self.paper_size);
         writer.set_title("Presswerk Scan");
@@ -483,8 +470,7 @@ fn otsu_threshold(gray: &GrayImage) -> u8 {
 
         sum_background += t as f64 * count as f64;
         let mean_background = sum_background / weight_background as f64;
-        let mean_foreground =
-            (sum_total - sum_background) / weight_foreground as f64;
+        let mean_foreground = (sum_total - sum_background) / weight_foreground as f64;
 
         let between_variance = weight_background as f64
             * weight_foreground as f64
@@ -649,11 +635,8 @@ mod tests {
     /// Verify that `correct_perspective` on a small RGBA image does not panic.
     #[test]
     fn correct_perspective_small_rgba_no_panic() {
-        let img = DynamicImage::ImageRgba8(RgbaImage::from_pixel(
-            50,
-            50,
-            Rgba([128, 128, 128, 255]),
-        ));
+        let img =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(50, 50, Rgba([128, 128, 128, 255])));
         let enhancer = ScanEnhancer::from_dynamic(img, PaperSize::Letter);
         // Should not panic — just fall back gracefully.
         let _result = enhancer.correct_perspective();
@@ -662,12 +645,7 @@ mod tests {
     /// Verify the shoelace area computation for a known rectangle.
     #[test]
     fn shoelace_area_rectangle() {
-        let corners = [
-            (0.0, 0.0),
-            (10.0, 0.0),
-            (10.0, 5.0),
-            (0.0, 5.0),
-        ];
+        let corners = [(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)];
         let area = shoelace_area(&corners);
         assert!((area - 50.0).abs() < 1e-3, "Expected 50.0, got {}", area);
     }
@@ -712,12 +690,30 @@ mod tests {
     #[test]
     fn classify_lines_basic() {
         let lines = vec![
-            PolarLine { r: 10.0, angle_in_degrees: 0 },   // horizontal
-            PolarLine { r: 20.0, angle_in_degrees: 5 },   // horizontal
-            PolarLine { r: 30.0, angle_in_degrees: 90 },  // vertical
-            PolarLine { r: 40.0, angle_in_degrees: 85 },  // vertical
-            PolarLine { r: 50.0, angle_in_degrees: 45 },  // ambiguous — discarded
-            PolarLine { r: 60.0, angle_in_degrees: 170 }, // horizontal
+            PolarLine {
+                r: 10.0,
+                angle_in_degrees: 0,
+            }, // horizontal
+            PolarLine {
+                r: 20.0,
+                angle_in_degrees: 5,
+            }, // horizontal
+            PolarLine {
+                r: 30.0,
+                angle_in_degrees: 90,
+            }, // vertical
+            PolarLine {
+                r: 40.0,
+                angle_in_degrees: 85,
+            }, // vertical
+            PolarLine {
+                r: 50.0,
+                angle_in_degrees: 45,
+            }, // ambiguous — discarded
+            PolarLine {
+                r: 60.0,
+                angle_in_degrees: 170,
+            }, // horizontal
         ];
 
         let (horiz, vert) = classify_lines(&lines);

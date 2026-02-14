@@ -211,9 +211,10 @@ fn flatten_attributes(attrs: &IppAttributes) -> PrinterAttributes {
 fn extract_job_id(attrs: &IppAttributes) -> Option<i32> {
     for group in attrs.groups_of(DelimiterTag::JobAttributes) {
         if let Some(attr) = group.attributes().get("job-id")
-            && let IppValue::Integer(id) = attr.value() {
-                return Some(*id);
-            }
+            && let IppValue::Integer(id) = attr.value()
+        {
+            return Some(*id);
+        }
     }
     None
 }

@@ -123,7 +123,10 @@ impl PaperSize {
             Self::Letter => (216, 279),
             Self::Legal => (216, 356),
             Self::Tabloid => (279, 432),
-            Self::Custom { width_mm, height_mm } => (*width_mm, *height_mm),
+            Self::Custom {
+                width_mm,
+                height_mm,
+            } => (*width_mm, *height_mm),
         }
     }
 }

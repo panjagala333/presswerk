@@ -31,11 +31,7 @@ impl PdfReader {
         info!("Opening PDF: {}", path_ref.display());
 
         let document = Document::load(path_ref).map_err(|err| {
-            PresswerkError::PdfError(format!(
-                "failed to open {}: {}",
-                path_ref.display(),
-                err
-            ))
+            PresswerkError::PdfError(format!("failed to open {}: {}", path_ref.display(), err))
         })?;
 
         debug!(pages = document.get_pages().len(), "PDF loaded");
@@ -171,11 +167,7 @@ impl PdfReader {
     ///
     /// Returns the full document as bytes with the rotation applied.
     #[instrument(skip(self), fields(page_number, degrees))]
-    pub fn rotate_page(
-        &self,
-        page_number: u32,
-        degrees: i32,
-    ) -> Result<Vec<u8>, PresswerkError> {
+    pub fn rotate_page(&self, page_number: u32, degrees: i32) -> Result<Vec<u8>, PresswerkError> {
         if degrees % 90 != 0 {
             return Err(PresswerkError::PdfError(format!(
                 "rotation must be a multiple of 90, got {}",
@@ -235,7 +227,10 @@ impl PdfReader {
 
         for page_num in start..=end {
             let page_id = *pages.get(&page_num).ok_or_else(|| {
-                PresswerkError::PdfError(format!("page {} not found during range extraction", page_num))
+                PresswerkError::PdfError(format!(
+                    "page {} not found during range extraction",
+                    page_num
+                ))
             })?;
             clone_page_into(&self.document, &mut new_doc, page_id)?;
         }
@@ -289,9 +284,10 @@ fn clone_page_into(
         }
         // Increment /Count.
         if let Ok(count_obj) = pages_dict.get_mut(b"Count")
-            && let Object::Integer(count) = count_obj {
-                *count += 1;
-            }
+            && let Object::Integer(count) = count_obj
+        {
+            *count += 1;
+        }
     }
 
     // Set the cloned page's /Parent to point at the target's /Pages node.

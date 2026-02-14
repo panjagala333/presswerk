@@ -1,6 +1,4 @@
-{{~ Aditionally delete this line and fill out the template below ~}}
-
-# {{PROJECT}} ABI/FFI Documentation
+# Presswerk ABI/FFI Documentation
 
 ## Overview
 
@@ -26,7 +24,7 @@ This library follows the **Hyperpolymath RSR Standard** for ABI and FFI design:
                   ▼
 ┌─────────────────────────────────────────────┐
 │  C Headers (auto-generated)                 │
-│  generated/abi/{{project}}.h                │
+│  generated/abi/presswerk.h                │
 └─────────────────┬───────────────────────────┘
                   │
                   │ imported by
@@ -39,7 +37,7 @@ This library follows the **Hyperpolymath RSR Standard** for ABI and FFI design:
 │  - Memory-safe by default                   │
 └─────────────────┬───────────────────────────┘
                   │
-                  │ compiled to lib{{project}}.so/.a
+                  │ compiled to libpresswerk.so/.a
                   ▼
 ┌─────────────────────────────────────────────┐
 │  Any Language via C ABI                     │
@@ -50,12 +48,15 @@ This library follows the **Hyperpolymath RSR Standard** for ABI and FFI design:
 ## Directory Structure
 
 ```
-{{project}}/
+presswerk/
 ├── src/
 │   ├── abi/                    # ABI definitions (Idris2)
 │   │   ├── Types.idr           # Core type definitions with proofs
 │   │   ├── Layout.idr          # Memory layout verification
-│   │   └── Foreign.idr         # FFI function declarations
+│   │   ├── Foreign.idr         # FFI function declarations
+│   │   ├── Bridge.idr          # Gutenberg block bridge types
+│   │   ├── Protocol.idr        # WordPress REST protocol proofs
+│   │   └── Encryption.idr      # Content encryption ABI
 │   └── lib/                    # Core library (any language)
 │
 ├── ffi/
@@ -67,11 +68,11 @@ This library follows the **Hyperpolymath RSR Standard** for ABI and FFI design:
 │       ├── test/
 │       │   └── integration_test.zig
 │       └── include/
-│           └── {{project}}.h   # C header (optional, can be generated)
+│           └── presswerk.h   # C header (optional, can be generated)
 │
 ├── generated/                  # Auto-generated files
 │   └── abi/
-│       └── {{project}}.h       # Generated from Idris2 ABI
+│       └── presswerk.h       # Generated from Idris2 ABI
 │
 └── bindings/                   # Language-specific wrappers (optional)
     ├── rust/
@@ -149,8 +150,20 @@ abiUpgrade old = MkABI2 {
 Zig exports C-compatible functions naturally:
 
 ```zig
-export fn library_function(param: i32) i32 {
-    return param * 2;
+export fn presswerk_init() ?*anyopaque {
+    return internal_init() catch null;
+}
+
+export fn presswerk_free(handle: *anyopaque) void {
+    internal_free(handle);
+}
+
+export fn presswerk_hash(handle: *anyopaque, data: [*]const u8, len: usize) u64 {
+    return internal_hash(handle, data[0..len]);
+}
+
+export fn presswerk_validate_transition(handle: *anyopaque, from: [*:0]const u8, to: [*:0]const u8) i32 {
+    return if (internal_validate(handle, from, to)) 1 else 0;
 }
 ```
 
@@ -199,7 +212,7 @@ zig build test                    # Run tests
 
 ```bash
 cd src/abi
-idris2 --cg c-header Types.idr -o ../../generated/abi/{{project}}.h
+idris2 --cg c-header Types.idr -o ../../generated/abi/presswerk.h
 ```
 
 ### Cross-Compile
@@ -222,64 +235,83 @@ zig build -Dtarget=x86_64-windows
 ### From C
 
 ```c
-#include "{{project}}.h"
+#include "presswerk.h"
 
 int main() {
-    void* handle = {{project}}_init();
+    void* handle = presswerk_init();
     if (!handle) return 1;
 
-    int result = {{project}}_process(handle, 42);
-    if (result != 0) {
-        const char* err = {{project}}_last_error();
+    // Hash content for integrity verification
+    const char* content = "Hello, Presswerk!";
+    uint64_t hash = presswerk_hash(handle, content, strlen(content));
+
+    // Validate a state transition
+    int valid = presswerk_validate_transition(handle, "draft", "published");
+    if (!valid) {
+        const char* err = presswerk_last_error();
         fprintf(stderr, "Error: %s\n", err);
     }
 
-    {{project}}_free(handle);
+    presswerk_free(handle);
     return 0;
 }
 ```
 
 Compile with:
 ```bash
-gcc -o example example.c -l{{project}} -L./zig-out/lib
+gcc -o example example.c -lpresswerk -L./zig-out/lib
 ```
 
 ### From Idris2
 
 ```idris
-import {{PROJECT}}.ABI.Foreign
+import Presswerk.ABI.Foreign
 
 main : IO ()
 main = do
-  Just handle <- init
-    | Nothing => putStrLn "Failed to initialize"
+  Just handle <- presswerk_init
+    | Nothing => putStrLn "Failed to initialize Presswerk"
 
-  Right result <- process handle 42
-    | Left err => putStrLn $ "Error: " ++ errorDescription err
+  let hash = presswerk_hash handle "Hello, Presswerk!"
+  putStrLn $ "Content hash: " ++ show hash
 
-  free handle
+  Right () <- presswerk_validate_transition handle "draft" "published"
+    | Left err => putStrLn $ "Transition error: " ++ errorDescription err
+
+  presswerk_free handle
   putStrLn "Success"
 ```
 
 ### From Rust
 
 ```rust
-#[link(name = "{{project}}")]
+#[link(name = "presswerk")]
 extern "C" {
-    fn {{project}}_init() -> *mut std::ffi::c_void;
-    fn {{project}}_free(handle: *mut std::ffi::c_void);
-    fn {{project}}_process(handle: *mut std::ffi::c_void, input: u32) -> i32;
+    fn presswerk_init() -> *mut std::ffi::c_void;
+    fn presswerk_free(handle: *mut std::ffi::c_void);
+    fn presswerk_hash(handle: *mut std::ffi::c_void, data: *const u8, len: usize) -> u64;
+    fn presswerk_validate_transition(
+        handle: *mut std::ffi::c_void,
+        from: *const std::ffi::c_char,
+        to: *const std::ffi::c_char,
+    ) -> i32;
 }
 
 fn main() {
     unsafe {
-        let handle = {{project}}_init();
+        let handle = presswerk_init();
         assert!(!handle.is_null());
 
-        let result = {{project}}_process(handle, 42);
-        assert_eq!(result, 0);
+        let content = b"Hello, Presswerk!";
+        let hash = presswerk_hash(handle, content.as_ptr(), content.len());
+        println!("Content hash: {hash}");
 
-        {{project}}_free(handle);
+        let from = c"draft";
+        let to = c"published";
+        let valid = presswerk_validate_transition(handle, from.as_ptr(), to.as_ptr());
+        assert_eq!(valid, 1);
+
+        presswerk_free(handle);
     }
 }
 ```
@@ -287,30 +319,39 @@ fn main() {
 ### From Julia
 
 ```julia
-const lib{{project}} = "lib{{project}}"
+const libpresswerk = "libpresswerk"
 
-function init()
-    handle = ccall((:{{project}}_init, lib{{project}}), Ptr{Cvoid}, ())
-    handle == C_NULL && error("Failed to initialize")
+function presswerk_init()
+    handle = ccall((:presswerk_init, libpresswerk), Ptr{Cvoid}, ())
+    handle == C_NULL && error("Failed to initialize Presswerk")
     handle
 end
 
-function process(handle, input)
-    result = ccall((:{{project}}_process, lib{{project}}), Cint, (Ptr{Cvoid}, UInt32), handle, input)
-    result
+function presswerk_hash(handle, data::AbstractString)
+    ccall((:presswerk_hash, libpresswerk), UInt64,
+          (Ptr{Cvoid}, Ptr{UInt8}, Csize_t), handle, data, sizeof(data))
 end
 
-function cleanup(handle)
-    ccall((:{{project}}_free, lib{{project}}), Cvoid, (Ptr{Cvoid},), handle)
+function presswerk_validate_transition(handle, from::AbstractString, to::AbstractString)
+    result = ccall((:presswerk_validate_transition, libpresswerk), Cint,
+                   (Ptr{Cvoid}, Cstring, Cstring), handle, from, to)
+    result != 0
+end
+
+function presswerk_free(handle)
+    ccall((:presswerk_free, libpresswerk), Cvoid, (Ptr{Cvoid},), handle)
 end
 
 # Usage
-handle = init()
+handle = presswerk_init()
 try
-    result = process(handle, 42)
-    println("Result: $result")
+    hash = presswerk_hash(handle, "Hello, Presswerk!")
+    println("Content hash: $hash")
+
+    valid = presswerk_validate_transition(handle, "draft", "published")
+    println("Transition valid: $valid")
 finally
-    cleanup(handle)
+    presswerk_free(handle)
 end
 ```
 
@@ -355,7 +396,7 @@ When modifying the ABI/FFI:
 
 2. **Generate C header**
    ```bash
-   idris2 --cg c-header src/abi/Types.idr -o generated/abi/{{project}}.h
+   idris2 --cg c-header src/abi/Types.idr -o generated/abi/presswerk.h
    ```
 
 3. **Update FFI implementation** (`ffi/zig/src/main.zig`)
@@ -374,7 +415,7 @@ When modifying the ABI/FFI:
 
 ## License
 
-{{LICENSE}}
+PMPL-1.0-or-later
 
 ## See Also
 

@@ -12,11 +12,11 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use presswerk_core::AppConfig;
 use presswerk_core::error::{PresswerkError, Result};
 use presswerk_core::types::{
     DiscoveredPrinter, DocumentType, JobId, JobSource, JobStatus, PrintJob, ServerStatus,
 };
-use presswerk_core::AppConfig;
 use presswerk_print::discovery::PrinterDiscovery;
 use presswerk_print::ipp_client::IppClient;
 use presswerk_print::ipp_server::IppServer;
@@ -72,7 +72,7 @@ impl AppServices {
         let config = load_config(&dir).unwrap_or_default();
 
         // Create IPP server (not started until user toggles it on)
-        let ipp_server = IppServer::new(Some(config.server_port));
+        let ipp_server = IppServer::new(Some(config.server_port), Some(dir.clone()));
 
         info!("app services initialised");
 
@@ -134,7 +134,12 @@ impl AppServices {
         let job_queue = Arc::clone(&self.job_queue);
         let mut server = self.ipp_server.lock().await;
         server.start(job_queue).await?;
-        self.audit("server_start", "system", true, Some(&format!("port {}", server.port())));
+        self.audit(
+            "server_start",
+            "system",
+            true,
+            Some(&format!("port {}", server.port())),
+        );
         Ok(server.status())
     }
 
@@ -203,29 +208,23 @@ impl AppServices {
             }
 
             match IppClient::new(&uri) {
-                Ok(client) => {
-                    match client.print_job(doc_bytes, document_type, &name).await {
-                        Ok(remote_id) => {
-                            info!(job_id = %job_id, remote_id, "print job accepted");
-                            if let Ok(queue) = services.job_queue.lock() {
-                                let _ = queue.update_status(&job_id, JobStatus::Completed, None);
-                            }
-                            services.audit("print_completed", &hash, true, None);
+                Ok(client) => match client.print_job(doc_bytes, document_type, &name).await {
+                    Ok(remote_id) => {
+                        info!(job_id = %job_id, remote_id, "print job accepted");
+                        if let Ok(queue) = services.job_queue.lock() {
+                            let _ = queue.update_status(&job_id, JobStatus::Completed, None);
                         }
-                        Err(e) => {
-                            error!(job_id = %job_id, error = %e, "print job failed");
-                            let msg = e.to_string();
-                            if let Ok(queue) = services.job_queue.lock() {
-                                let _ = queue.update_status(
-                                    &job_id,
-                                    JobStatus::Failed,
-                                    Some(&msg),
-                                );
-                            }
-                            services.audit("print_failed", &hash, false, Some(&msg));
-                        }
+                        services.audit("print_completed", &hash, true, None);
                     }
-                }
+                    Err(e) => {
+                        error!(job_id = %job_id, error = %e, "print job failed");
+                        let msg = e.to_string();
+                        if let Ok(queue) = services.job_queue.lock() {
+                            let _ = queue.update_status(&job_id, JobStatus::Failed, Some(&msg));
+                        }
+                        services.audit("print_failed", &hash, false, Some(&msg));
+                    }
+                },
                 Err(e) => {
                     error!(error = %e, "invalid printer URI");
                     let msg = e.to_string();
@@ -321,8 +320,7 @@ impl AppServices {
         let path = docs_dir.join(&hash);
 
         if !path.exists() {
-            std::fs::write(&path, data)
-                .map_err(PresswerkError::Io)?;
+            std::fs::write(&path, data).map_err(PresswerkError::Io)?;
         }
 
         Ok(hash)
@@ -333,8 +331,7 @@ impl AppServices {
         let docs_dir = data_dir::data_subdir("documents");
         let path = docs_dir.join(hash);
 
-        std::fs::read(&path)
-            .map_err(PresswerkError::Io)
+        std::fs::read(&path).map_err(PresswerkError::Io)
     }
 
     /// Path to the data directory.

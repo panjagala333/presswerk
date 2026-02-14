@@ -9,12 +9,12 @@
 
 use std::path::Path;
 
-use printpdf::{
-    BuiltinFont, Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Point, Pt,
-    RawImage, RawImageData, RawImageFormat, TextItem, XObjectTransform,
-};
-use presswerk_core::error::PresswerkError;
 use presswerk_core::PaperSize;
+use presswerk_core::error::PresswerkError;
+use printpdf::{
+    BuiltinFont, Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Point, Pt, RawImage,
+    RawImageData, RawImageFormat, TextItem, XObjectTransform,
+};
 use tracing::{debug, info, instrument};
 
 /// Creates new PDF documents from text content or raster images.
@@ -211,29 +211,22 @@ impl PdfWriter {
         let x_offset = margin_pt + (usable_w_pt - rendered_w_pt) / 2.0;
         let y_offset = margin_pt + (usable_h_pt - rendered_h_pt) / 2.0;
 
-        let ops = vec![
-            Op::UseXobject {
-                id: xobject_id,
-                transform: XObjectTransform {
-                    translate_x: Some(Pt(x_offset)),
-                    translate_y: Some(Pt(y_offset)),
-                    scale_x: Some(scale),
-                    scale_y: Some(scale),
-                    dpi: Some(dpi),
-                    rotate: None,
-                },
+        let ops = vec![Op::UseXobject {
+            id: xobject_id,
+            transform: XObjectTransform {
+                translate_x: Some(Pt(x_offset)),
+                translate_y: Some(Pt(y_offset)),
+                scale_x: Some(scale),
+                scale_y: Some(scale),
+                dpi: Some(dpi),
+                rotate: None,
             },
-        ];
+        }];
 
         let page = PdfPage::new(page_w, page_h, ops);
         doc.with_pages(vec![page]);
 
-        debug!(
-            rendered_w_pt,
-            rendered_h_pt,
-            scale,
-            "Image placed on page"
-        );
+        debug!(rendered_w_pt, rendered_h_pt, scale, "Image placed on page");
 
         let mut warnings: Vec<PdfWarnMsg> = Vec::new();
         let output = doc.save(&PdfSaveOptions::default(), &mut warnings);

@@ -20,9 +20,9 @@
 
 #![cfg(target_os = "android")]
 
+use jni::JNIEnv;
 use jni::objects::{JObject, JString, JValue};
 use jni::sys::jsize;
-use jni::JNIEnv;
 
 use presswerk_core::error::{PresswerkError, Result};
 
@@ -331,10 +331,7 @@ impl NativeCamera for AndroidBridge {
             &intent,
             "putExtra",
             "(Ljava/lang/String;Landroid/os/Parcelable;)Landroid/content/Intent;",
-            &[
-                JValue::Object(&j_extra_output),
-                JValue::Object(&photo_uri),
-            ],
+            &[JValue::Object(&j_extra_output), JValue::Object(&photo_uri)],
         )
         .map_err(|e| jni_err("putExtra(EXTRA_OUTPUT)", e))?;
 
@@ -352,10 +349,7 @@ impl NativeCamera for AndroidBridge {
             &activity,
             "startActivityForResult",
             "(Landroid/content/Intent;I)V",
-            &[
-                JValue::Object(&intent),
-                JValue::Int(REQUEST_IMAGE_CAPTURE),
-            ],
+            &[JValue::Object(&intent), JValue::Int(REQUEST_IMAGE_CAPTURE)],
         )
         .map_err(|e| jni_err("startActivityForResult(capture)", e))?;
 
@@ -446,11 +440,7 @@ impl NativeFilePicker for AndroidBridge {
                 .map_err(|e| jni_err("find_class(String)", e))?;
 
             let mime_array = env
-                .new_object_array(
-                    mime_types.len() as jsize,
-                    &string_class,
-                    &JObject::null(),
-                )
+                .new_object_array(mime_types.len() as jsize, &string_class, &JObject::null())
                 .map_err(|e| jni_err("new_object_array(mimes)", e))?;
 
             for (i, mt) in mime_types.iter().enumerate() {
@@ -469,10 +459,7 @@ impl NativeFilePicker for AndroidBridge {
                 &intent,
                 "putExtra",
                 "(Ljava/lang/String;[Ljava/lang/String;)Landroid/content/Intent;",
-                &[
-                    JValue::Object(&j_extra_key),
-                    JValue::Object(&mime_array),
-                ],
+                &[JValue::Object(&j_extra_key), JValue::Object(&mime_array)],
             )
             .map_err(|e| jni_err("putExtra(EXTRA_MIME_TYPES)", e))?;
         }
@@ -568,12 +555,7 @@ impl NativeFilePicker for AndroidBridge {
 
         loop {
             let bytes_read: i32 = env
-                .call_method(
-                    &input_stream,
-                    "read",
-                    "([B)I",
-                    &[JValue::Object(&buffer)],
-                )
+                .call_method(&input_stream, "read", "([B)I", &[JValue::Object(&buffer)])
                 .map_err(|e| jni_err("InputStream.read", e))?
                 .i()
                 .map_err(|e| jni_err("InputStream.read->i", e))?;
@@ -931,10 +913,7 @@ impl NativeShare for AndroidBridge {
 /// Obtain the application's `SharedPreferences` in private mode.
 ///
 /// Calls `activity.getSharedPreferences("presswerk_secrets", MODE_PRIVATE)`.
-fn shared_preferences<'a>(
-    env: &mut JNIEnv<'a>,
-    activity: &JObject<'_>,
-) -> Result<JObject<'a>> {
+fn shared_preferences<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'_>) -> Result<JObject<'a>> {
     let j_name: JString = env
         .new_string(PREFS_FILE)
         .map_err(|e| jni_err("new_string(prefs_name)", e))?;
