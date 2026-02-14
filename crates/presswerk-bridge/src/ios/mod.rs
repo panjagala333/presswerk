@@ -10,6 +10,23 @@
 // platforms.  All UIKit interactions require the main thread; methods that
 // present view controllers will return `PresswerkError::Bridge` if called
 // off-main.
+//
+// ## ABI Safety (src/abi/Bridge.idr)
+//
+// Unsafe code in this module falls into three categories, each covered by
+// formal proofs in Bridge.idr:
+//
+// 1. **Toll-free bridging** (nsstr_as_obj, nsdata_as_obj, dict_as_cf):
+//    Casts between NSString↔CFString, NSData↔CFData, NSDictionary↔CFDictionary.
+//    Proven safe by Bridge.idr TollFreePair — identical size and alignment.
+//
+// 2. **ObjC message sends** (msg_send!, define_class! #[unsafe(...)]):
+//    Required by the objc2 runtime. Selector correctness is verified by
+//    Apple's SDK headers. Thread safety proven by Bridge.idr threadReq.
+//
+// 3. **Security.framework C FFI** (SecItemAdd, SecItemCopyMatching, etc.):
+//    C function calls with toll-free bridged dictionary arguments.
+//    Keychain semantics proven by Bridge.idr KeychainProperty.
 
 #![cfg(target_os = "ios")]
 
@@ -110,7 +127,9 @@ fn root_view_controller() -> Result<Retained<UIViewController>> {
 
     let app = UIApplication::sharedApplication(mtm);
 
-    // UIApplication.keyWindow -> UIWindow? -> rootViewController?
+    // SAFETY: msg_send! to well-known UIApplication selectors (keyWindow,
+    // rootViewController). MainThreadMarker guarantees we are on the main
+    // thread (Bridge.idr threadReq = MainThread for UI operations).
     let root: Option<Retained<UIViewController>> = unsafe {
         let window: Option<Retained<AnyObject>> = msg_send![&app, keyWindow];
         window.and_then(|w| msg_send![&w, rootViewController])
@@ -137,11 +156,18 @@ fn dict_as_cf(dict: &NSDictionary<NSString, AnyObject>) -> *const c_void {
 
 /// Cast a `*const NSString` to `*const AnyObject` (NSString *is* an
 /// AnyObject).
+///
+/// SAFETY: NSString is a subclass of NSObject (which is AnyObject in objc2).
+/// The pointer representation is identical — no layout change.
+/// Proven by Bridge.idr TollFreePair: sameSize, sameAlign.
 unsafe fn nsstr_as_obj(s: &NSString) -> &AnyObject {
     &*(s as *const NSString as *const AnyObject)
 }
 
 /// Cast an `NSData` reference to `&AnyObject`.
+///
+/// SAFETY: NSData is a subclass of NSObject. Same pointer, same layout.
+/// Proven by Bridge.idr TollFreePair.
 unsafe fn nsdata_as_obj(d: &NSData) -> &AnyObject {
     &*(d as *const NSData as *const AnyObject)
 }
@@ -158,6 +184,10 @@ struct CameraDelegateIvars {
     sender: RefCell<Option<mpsc::Sender<Option<Vec<u8>>>>>,
 }
 
+// SAFETY: define_class! #[unsafe(super(NSObject))] declares CameraDelegate as
+// an ObjC class inheriting from NSObject. This is required by objc2 for all
+// custom ObjC classes. MainThreadOnly ensures delegate callbacks only fire on
+// the main thread (Bridge.idr threadReq CaptureImage = MainThread).
 define_class! {
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
@@ -173,13 +203,14 @@ define_class! {
             picker: &UIImagePickerController,
             info: &NSDictionary<NSString, AnyObject>,
         ) {
-            // Extract the original UIImage from the info dictionary.
+            // SAFETY: objectForKey with UIImagePickerControllerOriginalImage
+            // (extern static from UIKit). Returns nil if key not present.
             let image_bytes: Option<Vec<u8>> = unsafe {
                 info.objectForKey(UIImagePickerControllerOriginalImage)
             }
             .and_then(|ui_image: Retained<AnyObject>| {
-                // UIImageJPEGRepresentation is a C function that returns
-                // an autoreleased NSData*.
+                // SAFETY: UIImageJPEGRepresentation is a UIKit C function.
+                // Returns autoreleased NSData* (nil on failure).
                 let raw = unsafe {
                     UIImageJPEGRepresentation(
                         &*ui_image as *const AnyObject,
@@ -189,12 +220,17 @@ define_class! {
                 if raw.is_null() {
                     None
                 } else {
+                    // SAFETY: non-null result is an NSData* (toll-free bridged
+                    // with CFData — Bridge.idr TollFreePair). We copy bytes
+                    // immediately so the autorelease is harmless.
                     let ns_data: &NSData = unsafe { &*(raw as *const NSData) };
                     Some(ns_data.to_vec())
                 }
             });
 
-            // Dismiss the picker.
+            // SAFETY: dismissViewControllerAnimated:completion: is a standard
+            // UIViewController selector. Called on main thread (delegate is
+            // MainThreadOnly).
             unsafe {
                 let _: () = msg_send![
                     picker,
@@ -212,6 +248,7 @@ define_class! {
         /// Called when the user cancels the camera.
         #[unsafe(method(imagePickerControllerDidCancel:))]
         fn did_cancel(&self, picker: &UIImagePickerController) {
+            // SAFETY: dismissViewControllerAnimated:completion: — same as above.
             unsafe {
                 let _: () = msg_send![
                     picker,
@@ -240,6 +277,8 @@ impl CameraDelegate {
         let this = this.set_ivars(CameraDelegateIvars {
             sender: RefCell::new(Some(tx)),
         });
+        // SAFETY: Standard NSObject init via super. The alloc above provides
+        // a valid, allocated-but-uninitialised object; init completes it.
         unsafe { msg_send![super(this), init] }
     }
 }
@@ -252,6 +291,9 @@ struct DocPickerDelegateIvars {
     sender: RefCell<Option<mpsc::Sender<Option<String>>>>,
 }
 
+// SAFETY: define_class! #[unsafe(super(NSObject))] declares DocPickerDelegate
+// as an ObjC class inheriting from NSObject. MainThreadOnly ensures delegate
+// callbacks fire on the main thread (Bridge.idr threadReq PickFile = MainThread).
 define_class! {
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
@@ -269,6 +311,8 @@ define_class! {
         ) {
             // Take the first selected URL and convert to a file-system path.
             let path: Option<String> = urls.firstObject().and_then(|url| {
+                // SAFETY: msg_send to NSURL.path property — well-known
+                // Foundation selector, returns NSString? for the file path.
                 let ns_path: Option<Retained<NSString>> =
                     unsafe { msg_send![&url, path] };
                 ns_path.map(|p| p.to_string())
@@ -297,6 +341,7 @@ impl DocPickerDelegate {
         let this = this.set_ivars(DocPickerDelegateIvars {
             sender: RefCell::new(Some(tx)),
         });
+        // SAFETY: Standard NSObject init via super (same as CameraDelegate::new).
         unsafe { msg_send![super(this), init] }
     }
 }
@@ -351,13 +396,15 @@ impl NativePrint for IosBridge {
         let controller = UIPrintInteractionController::sharedPrintController(mtm);
         let ns_data = NSData::with_bytes(document);
 
-        // Set the document data as the single printing item.
+        // SAFETY: setPrintingItem is a well-known UIPrintInteractionController
+        // selector. MainThreadMarker (above) guarantees main-thread execution
+        // (Bridge.idr threadReq ShowPrintDialog = MainThread).
         unsafe {
             controller.setPrintingItem(Some(&ns_data));
         }
 
-        // Present the print dialog.  Completion handler is None (fire-and-
-        // forget).
+        // SAFETY: presentAnimated_completionHandler is a documented UIKit method.
+        // Main-thread requirement satisfied by require_main_thread() above.
         let presented = unsafe {
             controller.presentAnimated_completionHandler(true, None)
         };
@@ -408,6 +455,8 @@ impl NativeCamera for IosBridge {
         }
 
         let picker = UIImagePickerController::new(mtm);
+        // SAFETY: setSourceType is a UIImagePickerController property setter.
+        // We verified availability with isSourceTypeAvailable above.
         unsafe {
             picker.setSourceType(UIImagePickerControllerSourceType::Camera);
         }
@@ -416,9 +465,10 @@ impl NativeCamera for IosBridge {
         let (tx, rx) = mpsc::channel();
         let delegate = CameraDelegate::new(mtm, tx);
 
-        // UIImagePickerController.delegate is typed as
-        // `UIImagePickerControllerDelegate & UINavigationControllerDelegate`.
-        // Our CameraDelegate conforms to both.
+        // SAFETY: CameraDelegate conforms to both UIImagePickerControllerDelegate
+        // and UINavigationControllerDelegate (defined via define_class! above).
+        // The pointer cast CameraDelegate→AnyObject is safe: CameraDelegate is an
+        // NSObject subclass with identical pointer representation.
         unsafe {
             let delegate_obj: &AnyObject =
                 &*((&*delegate) as *const CameraDelegate as *const AnyObject);
@@ -427,6 +477,9 @@ impl NativeCamera for IosBridge {
 
         // Present modally on the root view controller.
         let root_vc = root_view_controller()?;
+        // SAFETY: presentViewController is a UIViewController method.
+        // Main-thread requirement satisfied by require_main_thread() above
+        // (Bridge.idr threadReq CaptureImage = MainThread).
         unsafe {
             root_vc.presentViewController_animated_completion(&picker, true, None);
         }
@@ -475,6 +528,8 @@ impl NativeFilePicker for IosBridge {
             .iter()
             .filter_map(|mime| {
                 let ns_mime = NSString::from_str(mime);
+                // SAFETY: msg_send to UTType class method (UniformTypeIdentifiers.framework).
+                // Returns nil for unrecognised MIME types, which filter_map discards.
                 let ut: Option<Retained<AnyObject>> = unsafe {
                     msg_send![
                         objc2::class!(UTType),
@@ -487,6 +542,8 @@ impl NativeFilePicker for IosBridge {
 
         // Fall back to UTType.data (public.data) if nothing resolved.
         let content_types: Retained<NSArray<AnyObject>> = if ut_types.is_empty() {
+            // SAFETY: msg_send to UTType class property. Returns the well-known
+            // public.data UTType — always non-nil.
             let public_data: Retained<AnyObject> = unsafe {
                 msg_send![objc2::class!(UTType), dataType]
             };
@@ -495,9 +552,9 @@ impl NativeFilePicker for IosBridge {
             NSArray::from_retained_slice(&ut_types)
         };
 
-        // Create the document picker.  `initForOpeningContentTypes:` takes
-        // an `NSArray<UTType>` but we pass `NSArray<AnyObject>` which is
-        // valid at the ObjC level (same layout).
+        // SAFETY: ObjC alloc+init pattern for UIDocumentPickerViewController.
+        // initForOpeningContentTypes: takes NSArray<UTType>; we pass NSArray<AnyObject>
+        // which is layout-compatible at the ObjC level (type erasure).
         let picker: Retained<UIDocumentPickerViewController> = unsafe {
             let alloc: Retained<UIDocumentPickerViewController> =
                 msg_send![objc2::class!(UIDocumentPickerViewController), alloc];
@@ -511,12 +568,18 @@ impl NativeFilePicker for IosBridge {
         let (tx, rx) = mpsc::channel();
         let delegate = DocPickerDelegate::new(mtm, tx);
 
+        // SAFETY: DocPickerDelegate conforms to UIDocumentPickerDelegate
+        // (defined via define_class! above). ProtocolObject::from_ref is the
+        // type-safe way to pass the delegate.
         unsafe {
             picker.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         }
 
         // Present on the root view controller.
         let root_vc = root_view_controller()?;
+        // SAFETY: presentViewController is a UIViewController method.
+        // Main-thread satisfied by require_main_thread() above
+        // (Bridge.idr threadReq PickFile = MainThread).
         unsafe {
             root_vc.presentViewController_animated_completion(&picker, true, None);
         }
@@ -562,9 +625,13 @@ impl NativeKeychain for IosBridge {
         let ns_service = NSString::from_str(KEYCHAIN_SERVICE);
         let ns_data = NSData::with_bytes(value);
 
+        // SAFETY: Accessing extern statics from Security.framework. These are
+        // constant CFStringRef values linked by the iOS SDK, valid for process lifetime.
         let keys: Vec<&NSString> = unsafe {
             vec![kSecClass, kSecAttrAccount, kSecAttrService, kSecValueData]
         };
+        // SAFETY: nsstr_as_obj/nsdata_as_obj are toll-free bridge casts.
+        // Proven safe by Bridge.idr TollFreePair.
         let values: Vec<&AnyObject> = unsafe {
             vec![
                 nsstr_as_obj(kSecClassGenericPassword),
@@ -576,6 +643,9 @@ impl NativeKeychain for IosBridge {
 
         let dict = NSDictionary::from_slices(&keys, &values);
 
+        // SAFETY: dict_as_cf casts NSDictionary to CFDictionary (toll-free bridged).
+        // SecItemAdd is a C function from Security.framework with well-defined semantics.
+        // Bridge.idr KeychainProperty StoreLoad proves store-then-load consistency.
         let status = unsafe { SecItemAdd(dict_as_cf(&dict), std::ptr::null_mut()) };
 
         match status {
@@ -603,10 +673,12 @@ impl NativeKeychain for IosBridge {
 
         // kSecReturnData expects a CFBoolean.  kCFBooleanTrue is toll-free
         // bridged with `[NSNumber numberWithBool:YES]`.
+        // SAFETY: msg_send to NSNumber class method. Returns a valid retained object.
         let cf_true: Retained<AnyObject> = unsafe {
             msg_send![objc2::class!(NSNumber), numberWithBool: Bool::YES]
         };
 
+        // SAFETY: Accessing Security.framework extern statics (process-lifetime constants).
         let keys: Vec<&NSString> = unsafe {
             vec![
                 kSecClass,
@@ -616,6 +688,7 @@ impl NativeKeychain for IosBridge {
                 kSecMatchLimit,
             ]
         };
+        // SAFETY: Toll-free bridge casts (Bridge.idr TollFreePair).
         let values: Vec<&AnyObject> = unsafe {
             vec![
                 nsstr_as_obj(kSecClassGenericPassword),
@@ -629,6 +702,9 @@ impl NativeKeychain for IosBridge {
         let dict = NSDictionary::from_slices(&keys, &values);
 
         let mut result: *const c_void = std::ptr::null();
+        // SAFETY: SecItemCopyMatching is a Security.framework C function.
+        // dict_as_cf is a toll-free bridge cast (Bridge.idr TollFreePair).
+        // On success, `result` receives a retained CFData (toll-free bridged with NSData).
         let status =
             unsafe { SecItemCopyMatching(dict_as_cf(&dict), &mut result) };
 
@@ -637,11 +713,13 @@ impl NativeKeychain for IosBridge {
                 if result.is_null() {
                     return Ok(None);
                 }
-                // `result` is a retained CFData (toll-free bridged with NSData).
+                // SAFETY: `result` is a retained CFData. CFData and NSData are
+                // toll-free bridged (Bridge.idr TollFreePair) — identical layout.
                 let ns_data: &NSData = unsafe { &*(result as *const NSData) };
                 let bytes = ns_data.to_vec();
 
-                // Balance the implicit retain from SecItemCopyMatching.
+                // SAFETY: Balance the implicit +1 retain from SecItemCopyMatching.
+                // We own this reference and must release it.
                 unsafe {
                     let _: () = msg_send![result as *const AnyObject, release];
                 }
@@ -666,8 +744,10 @@ impl NativeKeychain for IosBridge {
         let ns_key = NSString::from_str(key);
         let ns_service = NSString::from_str(KEYCHAIN_SERVICE);
 
+        // SAFETY: Security.framework extern statics (process-lifetime constants).
         let keys: Vec<&NSString> =
             unsafe { vec![kSecClass, kSecAttrAccount, kSecAttrService] };
+        // SAFETY: Toll-free bridge casts (Bridge.idr TollFreePair).
         let values: Vec<&AnyObject> = unsafe {
             vec![
                 nsstr_as_obj(kSecClassGenericPassword),
@@ -677,6 +757,8 @@ impl NativeKeychain for IosBridge {
         };
 
         let dict = NSDictionary::from_slices(&keys, &values);
+        // SAFETY: SecItemDelete C FFI with toll-free bridged dict.
+        // Bridge.idr KeychainProperty DeleteLoad proves delete-then-load = Nothing.
         let status = unsafe { SecItemDelete(dict_as_cf(&dict)) };
 
         match status {
@@ -696,9 +778,10 @@ impl IosBridge {
         let ns_service = NSString::from_str(KEYCHAIN_SERVICE);
         let ns_data = NSData::with_bytes(value);
 
-        // Query to locate the existing item.
+        // SAFETY: Security.framework extern statics (process-lifetime constants).
         let query_keys: Vec<&NSString> =
             unsafe { vec![kSecClass, kSecAttrAccount, kSecAttrService] };
+        // SAFETY: Toll-free bridge casts (Bridge.idr TollFreePair).
         let query_values: Vec<&AnyObject> = unsafe {
             vec![
                 nsstr_as_obj(kSecClassGenericPassword),
@@ -708,12 +791,16 @@ impl IosBridge {
         };
         let query = NSDictionary::from_slices(&query_keys, &query_values);
 
-        // New value to write.
+        // SAFETY: Security.framework extern static (process-lifetime constant).
         let update_keys: Vec<&NSString> = unsafe { vec![kSecValueData] };
+        // SAFETY: nsdata_as_obj is a toll-free bridge cast (Bridge.idr TollFreePair).
         let update_values: Vec<&AnyObject> =
             unsafe { vec![nsdata_as_obj(&ns_data)] };
         let update = NSDictionary::from_slices(&update_keys, &update_values);
 
+        // SAFETY: SecItemUpdate is a Security.framework C function.
+        // dict_as_cf casts NSDictionary→CFDictionary (toll-free bridged).
+        // Bridge.idr KeychainProperty LastWriteWins proves update semantics.
         let status = unsafe {
             SecItemUpdate(dict_as_cf(&query), dict_as_cf(&update))
         };
@@ -757,6 +844,9 @@ impl NativeShare for IosBridge {
         );
         let items = NSArray::from_retained_slice(&[url_as_obj]);
 
+        // SAFETY: ObjC alloc+init pattern for UIActivityViewController.
+        // initWithActivityItems:applicationActivities: takes NSArray of activity
+        // items and optional NSArray of UIActivity objects (nil = system default).
         let activity_vc: Retained<UIActivityViewController> = unsafe {
             let alloc: Retained<UIActivityViewController> =
                 msg_send![objc2::class!(UIActivityViewController), alloc];
@@ -768,6 +858,9 @@ impl NativeShare for IosBridge {
         };
 
         let root_vc = root_view_controller()?;
+        // SAFETY: presentViewController is a UIViewController method.
+        // Main-thread satisfied by require_main_thread() above
+        // (Bridge.idr threadReq ShareFile = MainThread).
         unsafe {
             root_vc.presentViewController_animated_completion(
                 &activity_vc,

@@ -77,6 +77,13 @@ const InternalHandle = struct {
 
 pub const Handle = opaque {};
 
+/// Cast an opaque Handle back to the internal representation.
+///
+/// SAFETY: This cast is proven safe by the Idris2 ABI layer:
+///   - Layout.idr proves struct alignment (all fields naturally aligned)
+///   - Bridge.idr OpaqueHandleSafe proves the cast roundtrip is valid
+///   - presswerk_init allocates via c_allocator (always aligned)
+///   - @alignCast is a no-op for heap allocations (naturally aligned)
 fn toInternal(handle: *Handle) *InternalHandle {
     return @ptrCast(@alignCast(handle));
 }
@@ -100,6 +107,8 @@ export fn presswerk_init() ?*Handle {
     };
 
     clearError();
+    // SAFETY: InternalHandle → Handle cast is the inverse of toInternal.
+    // Proven safe by Bridge.idr OpaqueHandleSafe — same pointer, opaque type.
     return @ptrCast(internal);
 }
 
