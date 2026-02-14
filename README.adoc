@@ -88,11 +88,13 @@ presswerk-app          (→ ALL above; dioxus with mobile feature)
 
 == Project Stats
 
-* **43** Rust source files (**10,219** lines)
+* **46** Rust source files (**10,749** lines)
 * **5** Idris2 ABI proof files (0 `Admitted`, 0 `believe_me`)
 * **3** Zig FFI files
-* **61** unit tests (40 print + 14 security + 7 document)
-* **0** clippy warnings
+* **68** unit tests (47 print + 14 security + 7 document)
+* **7** criterion benchmarks (3 security + 3 print + 1 document)
+* **21** GitHub Actions workflows (CI, security, release, benchmarks, CodeQL, Scorecard)
+* **0** clippy warnings, **0** audit vulnerabilities
 * **0** critical security findings (panic-attack)
 
 == Quick Start
@@ -110,6 +112,9 @@ just ci
 
 # Clippy lint
 just lint
+
+# Run benchmarks
+just bench
 
 # Security scan
 just assail
@@ -148,6 +153,21 @@ Every `unsafe` block in Rust references the specific ABI proof that justifies it
 * **Document integrity** — SHA-256 hashing with content-addressed storage
 * **Formal proofs** — No `Admitted`, no `believe_me`, no `transmute`
 * **SAFETY comments** — Every `unsafe` block references Bridge.idr/Layout.idr proofs
+
+== Container
+
+[source,bash]
+----
+# Build (Podman, chainguard base)
+podman build -f Containerfile -t presswerk:latest .
+
+# Run headless print server
+podman run --rm -p 631:631 -v presswerk-data:/app/data presswerk:latest
+
+# Seal and sign
+selur seal presswerk:latest
+cerro-torre sign presswerk:latest
+----
 
 == License
 

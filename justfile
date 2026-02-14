@@ -28,6 +28,10 @@ test:
 test-libs:
     cargo test -p presswerk-core -p presswerk-security -p presswerk-document -p presswerk-print
 
+# Run all benchmarks
+bench:
+    cargo bench --workspace
+
 # Clippy lint
 lint:
     cargo clippy --workspace -- -D warnings

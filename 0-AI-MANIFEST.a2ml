@@ -63,17 +63,23 @@ Generated C headers in `generated/abi/`.
 ## SESSION STARTUP CHECKLIST
 
 1. Read THIS file (0-AI-MANIFEST.a2ml) first
-2. Read `.machine_readable/STATE.scm` for current status (65% complete)
-3. Run `cargo test --workspace` to verify state (61 tests expected)
+2. Read `.machine_readable/STATE.scm` for current status (75% complete)
+3. Run `cargo test -p presswerk-core -p presswerk-security -p presswerk-document -p presswerk-print` to verify state (68 tests expected)
 4. Check for blockers in STATE.scm
 
 ## PROJECT STATUS
 
-- **Completion:** 65%
-- **Stats:** 43 Rust files, 10,219 lines, 5 Idris2 ABI files, 3 Zig FFI files
-- **Tests:** 61 unit tests (40 print + 14 security + 7 document), 0 failures
+- **Version:** 0.1.0
+- **Completion:** 75%
+- **Stats:** 46 Rust files, 10,749 lines, 5 Idris2 ABI files, 3 Zig FFI files
+- **Tests:** 68 unit tests (47 print + 14 security + 7 document), 0 failures
+- **Benchmarks:** 7 criterion benchmarks (3 security + 3 print + 1 document)
+- **Workflows:** 21 GitHub Actions (CI, security scan, release, benchmarks, CodeQL, Scorecard, etc.)
 - **Clippy:** 0 warnings
+- **Audit:** 0 vulnerabilities (14 warnings — unmaintained GTK3 transitive deps)
 - **Security:** panic-attack 0 critical, 4 high (FFI — covered by Bridge.idr)
+- **Container:** Containerfile (chainguard wolfi-base, multi-stage, non-root)
+- **Trustfile:** 7-step verification (ABI, banned patterns, audit, encryption, PQ readiness, hash, policy)
 - **Remotes:** GitHub + GitLab (hyperpolymath/presswerk)
 
 ## META

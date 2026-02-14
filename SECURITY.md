@@ -316,6 +316,78 @@ To stay informed about security updates:
 
 ---
 
+## Security Architecture
+
+Presswerk employs defence-in-depth across multiple layers:
+
+### Cryptographic Standard (Hyperpolymath Security Standard v1.0)
+
+| Function | Current (v0.1.0) | Target | Standard |
+|----------|------------------|--------|----------|
+| **Password hashing** | scrypt (via age) | Argon2id (512 MiB, 8 iter, 4 lanes) | GPU/ASIC resistant |
+| **General hashing** | SHA-256 | SHAKE3-512 (512-bit) | FIPS 202 |
+| **Fast hashing** | SHA-256 | BLAKE3-512 | Runtime/database |
+| **PQ signatures** | — | Dilithium5-AES (ML-DSA-87) + SPHINCS+ backup | FIPS 204 |
+| **PQ key exchange** | — | Kyber-1024 + SHAKE256-KDF | FIPS 203 (ML-KEM-1024) |
+| **Classical sigs** | Ed25519 | Ed448 + Dilithium5 hybrid | Terminate Ed25519 |
+| **Symmetric** | age (X25519) | XChaCha20-Poly1305 (256-bit) | Larger nonce space |
+| **KDF** | scrypt | HKDF-SHAKE512 | FIPS 202 |
+| **RNG** | OS CSPRNG | ChaCha20-DRBG (512-bit seed) | SP 800-90Ar1 |
+| **TLS (print server)** | Ed25519 self-signed | Ed448 + Dilithium5 hybrid | Post-quantum ready |
+| **Audit trail** | Append-only SQLite | Append-only + SHAKE3-512 integrity | No DELETE/UPDATE |
+| **Formal verification** | Idris2 ABI proofs | + Coq/Isabelle for crypto primitives | Proactive attestation |
+
+### Current Implementation
+
+| Layer | Technology | Verification |
+|-------|-----------|-------------|
+| **Encryption at rest** | age (X25519, scrypt KDF) | Idris2: `Encryption.idr` — encrypt/decrypt roundtrip, ciphertext bounds, key separation |
+| **Document integrity** | SHA-256 content-addressed storage | Idris2: `Encryption.idr` — hash collision resistance |
+| **TLS (print server)** | Ed25519 self-signed via ring/rustls | Idris2: `Layout.idr` — cert struct alignment |
+| **Audit trail** | Append-only encrypted SQLite | No DELETE/UPDATE on audit table; verified by Trustfile |
+
+### Formal Verification
+
+All security-critical boundaries are formally proven in Idris2 (5 files, 0 `Admitted`, 0 `believe_me`):
+
+- **Protocol.idr** — IPP op-code injectivity, job state machine (valid transitions, terminal states)
+- **Encryption.idr** — encrypt/decrypt roundtrip identity, ciphertext size bounds, key separation
+- **Bridge.idr** — Toll-free bridging (iOS), keychain semantics, thread safety, JNI invariants
+- **Layout.idr** — Struct memory layout alignment for FFI boundary safety
+
+Every `unsafe` block in Rust references the specific ABI proof that justifies it via a `// SAFETY:` comment.
+
+### Trustfile Verification
+
+The `contractiles/trust/Trustfile.hs` verifies:
+
+1. ABI proof integrity — all 5 Idris2 files present, no banned patterns
+2. No banned Rust patterns — no `transmute` (except FFI), all `unsafe` documented
+3. Audit trail integrity — no DELETE/UPDATE on audit table
+4. Encryption key safety — passphrase never written to disk
+5. Policy hash integrity — Nickel policy matches expected SHA-256
+
+### Banned Patterns
+
+The following are banned project-wide and enforced by CI + Trustfile:
+
+| Pattern | Language | Replacement |
+|---------|----------|-------------|
+| `Admitted` | Idris2 | Real proofs |
+| `believe_me` | Idris2 | Safe wrappers |
+| `assert_total` | Idris2 | Totality proofs |
+| `transmute` | Rust | Safe alternatives (except FFI) |
+| `unsafe` without `// SAFETY:` | Rust | Document the invariant |
+
+### Dependency Security
+
+- **0 known vulnerabilities** (`cargo audit`)
+- **No C-based OCR** — uses `ocrs` (pure Rust neural network), not Tesseract
+- **No openssl** — uses `ring`/`rustls` for all cryptography
+- **Bundled SQLite** — no system dependency for `rusqlite`
+
+---
+
 ## Security Best Practices
 
 When using Presswerk, we recommend:

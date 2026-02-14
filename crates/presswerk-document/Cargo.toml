@@ -29,3 +29,10 @@ ocrs = { workspace = true, optional = true }
 rten = { workspace = true, optional = true }
 rten-imageproc = { workspace = true, optional = true }
 rten-tensor = { workspace = true, optional = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "document_bench"
+harness = false

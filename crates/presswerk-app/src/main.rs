@@ -64,17 +64,14 @@ enum Route {
 /// Root component.
 fn app() -> Element {
     // Initialise backend services (databases, mDNS, config)
-    let svc = use_hook(|| {
-        match AppServices::init() {
-            Ok(s) => {
-                tracing::info!("backend services initialised");
-                s
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "failed to initialise services — using fallback");
-                // Attempt a minimal init (in-memory databases)
-                AppServices::init().expect("even fallback init failed")
-            }
+    let svc = use_hook(|| match AppServices::init() {
+        Ok(s) => {
+            tracing::info!("backend services initialised");
+            s
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "persistent storage failed — using in-memory fallback");
+            AppServices::fallback().expect("even fallback init failed")
         }
     });
 

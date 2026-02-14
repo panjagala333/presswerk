@@ -86,6 +86,41 @@ impl AppServices {
         })
     }
 
+    /// Degraded-mode initialisation using in-memory databases only.
+    ///
+    /// Use this when persistent storage is unavailable (corrupted DB, read-only
+    /// filesystem, etc.).  Discovery and IPP server still work; data is lost on
+    /// app exit.
+    pub fn fallback() -> Result<Self> {
+        warn!("initialising app services in fallback (in-memory) mode");
+
+        let dir = data_dir::data_dir();
+        let job_queue = JobQueue::open_in_memory()?;
+        let audit_log = AuditLog::open_in_memory()?;
+
+        let discovery = match PrinterDiscovery::new() {
+            Ok(d) => Some(d),
+            Err(e) => {
+                warn!("mDNS discovery unavailable: {e}");
+                None
+            }
+        };
+
+        let config = AppConfig::default();
+        let ipp_server = IppServer::new(Some(config.server_port), None);
+
+        info!("fallback app services initialised (in-memory)");
+
+        Ok(Self {
+            job_queue: Arc::new(Mutex::new(job_queue)),
+            audit_log: Arc::new(Mutex::new(audit_log)),
+            discovery: Arc::new(Mutex::new(discovery)),
+            ipp_server: Arc::new(tokio::sync::Mutex::new(ipp_server)),
+            data_dir: dir,
+            config: Arc::new(Mutex::new(config)),
+        })
+    }
+
     // -- Discovery -----------------------------------------------------------
 
     /// Start mDNS printer discovery in the background.

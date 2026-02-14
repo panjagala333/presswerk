@@ -59,10 +59,10 @@ const DEFAULT_PORT: u16 = 631;
 const MAX_REQUEST_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 
 /// IPP version 1.1 major byte.
-const IPP_VERSION_MAJOR: u8 = 0x01;
+pub const IPP_VERSION_MAJOR: u8 = 0x01;
 
 /// IPP version 1.1 minor byte.
-const IPP_VERSION_MINOR: u8 = 0x01;
+pub const IPP_VERSION_MINOR: u8 = 0x01;
 
 /// Default printer name advertised via mDNS and returned in attributes.
 const PRINTER_NAME: &str = "Presswerk Virtual Printer";
@@ -75,73 +75,73 @@ const IPP_SERVICE_TYPE: &str = "_ipp._tcp.local.";
 // ---------------------------------------------------------------------------
 
 /// Operation attributes group delimiter.
-const TAG_OPERATION_ATTRIBUTES: u8 = 0x01;
+pub const TAG_OPERATION_ATTRIBUTES: u8 = 0x01;
 
 /// Job attributes group delimiter.
-const TAG_JOB_ATTRIBUTES: u8 = 0x02;
+pub const TAG_JOB_ATTRIBUTES: u8 = 0x02;
 
 /// End-of-attributes-tag -- terminates the attribute section.
-const TAG_END_OF_ATTRIBUTES: u8 = 0x03;
+pub const TAG_END_OF_ATTRIBUTES: u8 = 0x03;
 
 /// Printer attributes group delimiter.
-const TAG_PRINTER_ATTRIBUTES: u8 = 0x04;
+pub const TAG_PRINTER_ATTRIBUTES: u8 = 0x04;
 
 // ---------------------------------------------------------------------------
 // IPP value tags (RFC 8010 SS3.5.2)
 // ---------------------------------------------------------------------------
 
 /// Integer value (4 bytes, signed big-endian).
-const VALUE_TAG_INTEGER: u8 = 0x21;
+pub const VALUE_TAG_INTEGER: u8 = 0x21;
 
 /// Boolean value (1 byte: 0x00 = false, 0x01 = true).
-const VALUE_TAG_BOOLEAN: u8 = 0x22;
+pub const VALUE_TAG_BOOLEAN: u8 = 0x22;
 
 /// Enum value (4 bytes, same encoding as integer).
-const VALUE_TAG_ENUM: u8 = 0x23;
+pub const VALUE_TAG_ENUM: u8 = 0x23;
 
 /// textWithoutLanguage (UTF-8 string).
-const VALUE_TAG_TEXT: u8 = 0x41;
+pub const VALUE_TAG_TEXT: u8 = 0x41;
 
 /// nameWithoutLanguage (UTF-8 string).
-const VALUE_TAG_NAME: u8 = 0x42;
+pub const VALUE_TAG_NAME: u8 = 0x42;
 
 /// keyword (US-ASCII string, used for document-format etc.).
-const VALUE_TAG_KEYWORD: u8 = 0x44;
+pub const VALUE_TAG_KEYWORD: u8 = 0x44;
 
 /// uri (US-ASCII string).
-const VALUE_TAG_URI: u8 = 0x45;
+pub const VALUE_TAG_URI: u8 = 0x45;
 
 /// charset (US-ASCII string, e.g. "utf-8").
-const VALUE_TAG_CHARSET: u8 = 0x47;
+pub const VALUE_TAG_CHARSET: u8 = 0x47;
 
 /// naturalLanguage (US-ASCII string, e.g. "en").
-const VALUE_TAG_NATURAL_LANGUAGE: u8 = 0x48;
+pub const VALUE_TAG_NATURAL_LANGUAGE: u8 = 0x48;
 
 // ---------------------------------------------------------------------------
 // IPP operation IDs (RFC 8011 SS4)
 // ---------------------------------------------------------------------------
 
 /// Print-Job operation identifier.
-const OP_PRINT_JOB: u16 = 0x0002;
+pub const OP_PRINT_JOB: u16 = 0x0002;
 
 /// Validate-Job operation identifier.
-const OP_VALIDATE_JOB: u16 = 0x0004;
+pub const OP_VALIDATE_JOB: u16 = 0x0004;
 
 /// Cancel-Job operation identifier.
-const OP_CANCEL_JOB: u16 = 0x0008;
+pub const OP_CANCEL_JOB: u16 = 0x0008;
 
 /// Get-Jobs operation identifier.
-const OP_GET_JOBS: u16 = 0x000A;
+pub const OP_GET_JOBS: u16 = 0x000A;
 
 /// Get-Printer-Attributes operation identifier.
-const OP_GET_PRINTER_ATTRIBUTES: u16 = 0x000B;
+pub const OP_GET_PRINTER_ATTRIBUTES: u16 = 0x000B;
 
 // ---------------------------------------------------------------------------
 // IPP status codes (RFC 8011 SS4.1.8)
 // ---------------------------------------------------------------------------
 
 /// Successful completion.
-const STATUS_OK: u16 = 0x0000;
+pub const STATUS_OK: u16 = 0x0000;
 
 /// Client sent a malformed request.
 const STATUS_CLIENT_ERROR_BAD_REQUEST: u16 = 0x0400;
@@ -190,40 +190,40 @@ const PRINTER_STATE_IDLE: i32 = 3;
 
 /// A single parsed IPP attribute.
 #[derive(Debug, Clone)]
-struct IppAttribute {
+pub struct IppAttribute {
     /// The value tag that describes the type of this attribute.
     /// Retained for future use (e.g. distinguishing keyword vs text responses).
     #[allow(dead_code)]
-    value_tag: u8,
+    pub value_tag: u8,
     /// Attribute name (empty for additional values in a 1setOf).
-    name: String,
+    pub name: String,
     /// Raw value bytes.
-    value: Vec<u8>,
+    pub value: Vec<u8>,
 }
 
 /// A group of attributes delimited by a group tag.
 #[derive(Debug, Clone)]
-struct IppAttributeGroup {
+pub struct IppAttributeGroup {
     /// The delimiter tag for this group (0x01, 0x02, 0x04, etc.)
-    delimiter: u8,
+    pub delimiter: u8,
     /// Ordered list of attributes within the group.
-    attributes: Vec<IppAttribute>,
+    pub attributes: Vec<IppAttribute>,
 }
 
 impl IppAttributeGroup {
     /// Convenience: find the first attribute with the given name.
-    fn get(&self, name: &str) -> Option<&IppAttribute> {
+    pub fn get(&self, name: &str) -> Option<&IppAttribute> {
         self.attributes.iter().find(|a| a.name == name)
     }
 
     /// Read the first attribute with the given name as a UTF-8 string.
-    fn get_string(&self, name: &str) -> Option<String> {
+    pub fn get_string(&self, name: &str) -> Option<String> {
         self.get(name)
             .and_then(|a| String::from_utf8(a.value.clone()).ok())
     }
 
     /// Read the first attribute with the given name as an i32 integer.
-    fn get_integer(&self, name: &str) -> Option<i32> {
+    pub fn get_integer(&self, name: &str) -> Option<i32> {
         self.get(name).and_then(|a| {
             if a.value.len() == 4 {
                 Some(i32::from_be_bytes([
@@ -238,24 +238,24 @@ impl IppAttributeGroup {
 
 /// A fully parsed IPP request.
 #[derive(Debug)]
-struct IppRequest {
+pub struct IppRequest {
     /// IPP version major (should be 1).
-    version_major: u8,
+    pub version_major: u8,
     /// IPP version minor (should be 1).
-    version_minor: u8,
+    pub version_minor: u8,
     /// The operation identifier (e.g. 0x0002 for Print-Job).
-    operation_id: u16,
+    pub operation_id: u16,
     /// The request-id (echoed back in the response).
-    request_id: u32,
+    pub request_id: u32,
     /// All attribute groups in order.
-    attribute_groups: Vec<IppAttributeGroup>,
+    pub attribute_groups: Vec<IppAttributeGroup>,
     /// Document data (everything after the end-of-attributes tag).
-    document_data: Vec<u8>,
+    pub document_data: Vec<u8>,
 }
 
 impl IppRequest {
     /// Get the first operation-attributes group.
-    fn operation_attributes(&self) -> Option<&IppAttributeGroup> {
+    pub fn operation_attributes(&self) -> Option<&IppAttributeGroup> {
         self.attribute_groups
             .iter()
             .find(|g| g.delimiter == TAG_OPERATION_ATTRIBUTES)
@@ -263,7 +263,7 @@ impl IppRequest {
 
     /// Get the first job-attributes group.
     #[allow(dead_code)]
-    fn job_attributes(&self) -> Option<&IppAttributeGroup> {
+    pub fn job_attributes(&self) -> Option<&IppAttributeGroup> {
         self.attribute_groups
             .iter()
             .find(|g| g.delimiter == TAG_JOB_ATTRIBUTES)
@@ -293,7 +293,7 @@ impl IppRequest {
 /// end-of-attributes-tag: 1 byte (0x03)
 /// document-data: remainder
 /// ```
-fn parse_ipp_request(data: &[u8]) -> std::result::Result<IppRequest, String> {
+pub fn parse_ipp_request(data: &[u8]) -> std::result::Result<IppRequest, String> {
     if data.len() < 8 {
         return Err(format!(
             "IPP request too short: {} bytes (minimum 8)",
@@ -405,16 +405,16 @@ fn parse_ipp_request(data: &[u8]) -> std::result::Result<IppRequest, String> {
 /// Builder for constructing IPP response messages.
 ///
 /// Produces the binary encoding described in RFC 8010 SS3.4.
-struct IppResponseBuilder {
+pub struct IppResponseBuilder {
     /// Accumulated response bytes.
-    buf: Vec<u8>,
+    pub buf: Vec<u8>,
     /// Whether we are currently inside an attribute group.
-    in_group: bool,
+    pub in_group: bool,
 }
 
 impl IppResponseBuilder {
     /// Create a new response with the given status code and request-id.
-    fn new(status_code: u16, request_id: u32) -> Self {
+    pub fn new(status_code: u16, request_id: u32) -> Self {
         let mut buf = Vec::with_capacity(256);
         // version-number: IPP 1.1
         buf.push(IPP_VERSION_MAJOR);
@@ -430,66 +430,66 @@ impl IppResponseBuilder {
     }
 
     /// Start a new attribute group.
-    fn begin_group(&mut self, delimiter: u8) -> &mut Self {
+    pub fn begin_group(&mut self, delimiter: u8) -> &mut Self {
         self.buf.push(delimiter);
         self.in_group = true;
         self
     }
 
     /// Write a textWithoutLanguage attribute.
-    fn text(&mut self, name: &str, value: &str) -> &mut Self {
+    pub fn text(&mut self, name: &str, value: &str) -> &mut Self {
         self.write_attr(VALUE_TAG_TEXT, name, value.as_bytes())
     }
 
     /// Write a nameWithoutLanguage attribute.
-    fn name_attr(&mut self, name: &str, value: &str) -> &mut Self {
+    pub fn name_attr(&mut self, name: &str, value: &str) -> &mut Self {
         self.write_attr(VALUE_TAG_NAME, name, value.as_bytes())
     }
 
     /// Write a keyword attribute.
-    fn keyword(&mut self, name: &str, value: &str) -> &mut Self {
+    pub fn keyword(&mut self, name: &str, value: &str) -> &mut Self {
         self.write_attr(VALUE_TAG_KEYWORD, name, value.as_bytes())
     }
 
     /// Write an additional keyword value for a 1setOf keyword.
     ///
     /// Per RFC 8010 SS3.1.4, additional values have name-length = 0.
-    fn keyword_additional(&mut self, value: &str) -> &mut Self {
+    pub fn keyword_additional(&mut self, value: &str) -> &mut Self {
         self.write_attr(VALUE_TAG_KEYWORD, "", value.as_bytes())
     }
 
     /// Write a URI attribute.
-    fn uri(&mut self, name: &str, value: &str) -> &mut Self {
+    pub fn uri(&mut self, name: &str, value: &str) -> &mut Self {
         self.write_attr(VALUE_TAG_URI, name, value.as_bytes())
     }
 
     /// Write a charset attribute.
-    fn charset(&mut self, name: &str, value: &str) -> &mut Self {
+    pub fn charset(&mut self, name: &str, value: &str) -> &mut Self {
         self.write_attr(VALUE_TAG_CHARSET, name, value.as_bytes())
     }
 
     /// Write a naturalLanguage attribute.
-    fn natural_language(&mut self, name: &str, value: &str) -> &mut Self {
+    pub fn natural_language(&mut self, name: &str, value: &str) -> &mut Self {
         self.write_attr(VALUE_TAG_NATURAL_LANGUAGE, name, value.as_bytes())
     }
 
     /// Write an integer attribute.
-    fn integer(&mut self, name: &str, value: i32) -> &mut Self {
+    pub fn integer(&mut self, name: &str, value: i32) -> &mut Self {
         self.write_attr(VALUE_TAG_INTEGER, name, &value.to_be_bytes())
     }
 
     /// Write an enum attribute (same wire encoding as integer).
-    fn enum_attr(&mut self, name: &str, value: i32) -> &mut Self {
+    pub fn enum_attr(&mut self, name: &str, value: i32) -> &mut Self {
         self.write_attr(VALUE_TAG_ENUM, name, &value.to_be_bytes())
     }
 
     /// Write a boolean attribute.
-    fn boolean(&mut self, name: &str, value: bool) -> &mut Self {
+    pub fn boolean(&mut self, name: &str, value: bool) -> &mut Self {
         self.write_attr(VALUE_TAG_BOOLEAN, name, &[if value { 0x01 } else { 0x00 }])
     }
 
     /// Write a raw attribute (value-tag, name, value bytes).
-    fn write_attr(&mut self, value_tag: u8, name: &str, value: &[u8]) -> &mut Self {
+    pub fn write_attr(&mut self, value_tag: u8, name: &str, value: &[u8]) -> &mut Self {
         // value-tag: 1 byte
         self.buf.push(value_tag);
         // name-length: 2 bytes (big-endian)
@@ -507,7 +507,7 @@ impl IppResponseBuilder {
     }
 
     /// Finalise the response: write end-of-attributes tag and return bytes.
-    fn build(mut self) -> Vec<u8> {
+    pub fn build(mut self) -> Vec<u8> {
         self.buf.push(TAG_END_OF_ATTRIBUTES);
         self.buf
     }
