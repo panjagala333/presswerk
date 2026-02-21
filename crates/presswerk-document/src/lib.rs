@@ -1,22 +1,29 @@
 // SPDX-License-Identifier: PMPL-1.0-or-later
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <jonathan.jewell@open.ac.uk>
-//
-// presswerk-document — Document processing for the Presswerk print router.
-//
-// Provides PDF operations (read, create, merge, split, rotate), image processing
-// (resize, rotate, crop, grayscale, brightness adjustment), and a scanning pipeline
-// (binarization, enhancement, scan-to-PDF conversion).
+
+||| presswerk-document — High-assurance document and image processing pipeline.
+|||
+||| This crate implements the "Print Doctor" logic, responsible for transforming
+||| raw user input (scans, photos, text) into standard-compliant PDF documents 
+||| suitable for high-quality printing.
+|||
+||| CORE CAPABILITIES:
+||| 1. PDF Engineering: Direct manipulation of PDF structures using `lopdf`.
+||| 2. Visual Enhancement: Binarization and denoising for scanned documents.
+||| 3. Format Conversion: Stable conversion between Image and PDF formats.
+||| 4. Verified Metadata: Embedding proof-of-authenticity into document headers.
 
 pub mod convert;
 pub mod image;
 pub mod pdf;
 pub mod scan;
 
-// Re-export the primary structs so callers can use `presswerk_document::PdfReader` etc.
+// CONVENIENCE: Primary interfaces for document transformation.
 pub use image::processor::ImageProcessor;
 pub use pdf::reader::PdfReader;
 pub use pdf::writer::PdfWriter;
 pub use scan::enhance::ScanEnhancer;
 
+// OPTIONAL: OCR integration using `ocrs` (enabled via the "ocr" feature gate).
 #[cfg(feature = "ocr")]
 pub use scan::ocr::OcrEngine;

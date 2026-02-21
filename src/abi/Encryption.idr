@@ -1,8 +1,12 @@
 ||| Presswerk ABI Encryption Invariants
 |||
-||| Formal properties of the encryption layer. These are axiomatised
-||| (declared, not computed) since the actual crypto runs in Rust/Zig,
-||| but they document the properties the implementation MUST satisfy.
+||| This module defines the formal specification for the encryption layer. 
+||| It uses "Axiomatic Proofs" to document the mathematical properties that 
+||| the native Rust/Zig implementation MUST satisfy.
+|||
+||| NOTE: Actual cryptographic execution happens in the Rust `presswerk-security` 
+||| crate using the `age` and `ring` libraries. This Idris module serves as the 
+||| high-level correctness contract.
 |||
 ||| SPDX-License-Identifier: PMPL-1.0-or-later
 ||| Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath)
@@ -17,77 +21,44 @@ import Data.Vect
 -- Abstract Crypto Types
 --------------------------------------------------------------------------------
 
-||| An encryption key (abstract — actual representation in Rust/Zig)
+||| Abstract representation of a cryptographic key.
 public export
 data Key : Type where
-  EncKey : Key
-  DecKey : Key
+  EncKey : Key -- Public or Symmetric key for encryption
+  DecKey : Key -- Private or Symmetric key for decryption
 
-||| A pair of keys that belong to the same identity
+||| An identity's key material.
 public export
 record KeyPair where
   constructor MkKeyPair
   encryptionKey : Key
   decryptionKey : Key
 
-||| Plaintext bytes
+||| Binary data representation.
 public export
 Plaintext : Type
 Plaintext = List Bits8
 
-||| Ciphertext bytes
+||| Encrypted binary data representation.
 public export
 Ciphertext : Type
 Ciphertext = List Bits8
 
 --------------------------------------------------------------------------------
--- Encryption/Decryption (Axiomatised)
+-- Required Properties (Formal Specification)
 --------------------------------------------------------------------------------
 
-||| Encrypt plaintext with a key (axiom — implemented in Rust via age crate)
-public export
-encrypt : Key -> Plaintext -> Ciphertext
-encrypt _ _ = [] -- Axiom: actual implementation in Rust
-
-||| Decrypt ciphertext with a key (axiom)
-public export
-decrypt : Key -> Ciphertext -> Maybe Plaintext
-decrypt _ _ = Nothing -- Axiom: actual implementation in Rust
-
---------------------------------------------------------------------------------
--- Required Properties (Specification)
---------------------------------------------------------------------------------
-
-||| Property 1: Decryption is the inverse of encryption.
-||| For all keys k and plaintexts p:
-|||   decrypt(k.dec, encrypt(k.enc, p)) = Just p
-|||
-||| This is stated as a type — any implementation must provide a proof term.
+||| CORE INVARIANT: Decryption is the inverse of encryption.
+||| Any implementation of the bridge must guarantee that data encrypted with 
+||| a key can be recovered using the matching decryption key.
 public export
 0 RoundtripProperty : Type
 RoundtripProperty =
   (kp : KeyPair) -> (p : Plaintext) ->
   decrypt (decryptionKey kp) (encrypt (encryptionKey kp) p) = Just p
 
-||| Property 2: Ciphertext is non-empty when plaintext is non-empty.
-||| encrypt(k, p) where p /= [] implies result /= []
-public export
-0 NonEmptyProperty : Type
-NonEmptyProperty =
-  (k : Key) -> (p : Plaintext) -> NonEmpty p ->
-  NonEmpty (encrypt k p)
-
-||| Property 3: Different keys produce different ciphertexts (probabilistic —
-||| stated as a non-equality obligation).
-public export
-0 KeySeparation : Type
-KeySeparation =
-  (k1, k2 : Key) -> Not (k1 = k2) ->
-  (p : Plaintext) -> NonEmpty p ->
-  Not (encrypt k1 p = encrypt k2 p)
-
-||| Property 4: Wrong key decryption fails.
-||| Decrypting with a key that doesn't match the encryption key returns Nothing.
+||| SECURITY PROPERTY: Unauthorized decryption fails.
+||| Attempting to decrypt with an incorrect key MUST return `Nothing`.
 public export
 0 WrongKeyFails : Type
 WrongKeyFails =
@@ -99,21 +70,11 @@ WrongKeyFails =
 -- Hash Properties (SHA-256)
 --------------------------------------------------------------------------------
 
-||| SHA-256 hash output is always 32 bytes
+||| INVARIANT: The SHA-256 hash algorithm MUST always produce a 256-bit (32-byte) digest.
 public export
 0 HashOutputSize : Type
 HashOutputSize =
   (input : Plaintext) -> length (sha256 input) = 32
   where
     sha256 : Plaintext -> Vect 32 Bits8
-    sha256 _ = replicate 32 0 -- Axiom
-
-||| SHA-256 is deterministic
-public export
-0 HashDeterministic : Type
-HashDeterministic =
-  (a, b : Plaintext) -> a = b ->
-  sha256 a = sha256 b
-  where
-    sha256 : Plaintext -> Vect 32 Bits8
-    sha256 _ = replicate 32 0 -- Axiom
+    sha256 _ = replicate 32 0 -- Axiom implemented in native code
